@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.spec
+
+# Large data files (First_try.csv can be 50MB+)
+First_try.csv
+123_minus_*.csv
+iso_match.xlsx
+iso_line_coverage.xlsx
+minus_line_coverage.xlsx
+
+# Runtime outputs
+*.log
+run_pipeline_log.txt
+live_selection.json
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
