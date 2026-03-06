@@ -7,6 +7,11 @@ dist/
 build/
 *.spec
 
+# Virtual environment
+.venv/
+venv/
+ENV/
+
 # Large data files (First_try.csv can be 50MB+)
 First_try.csv
 123_minus_*.csv
