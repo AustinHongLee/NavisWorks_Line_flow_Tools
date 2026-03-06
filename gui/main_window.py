@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 
+import pandas as pd
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -32,6 +33,8 @@ from gui.theme import (
 from gui.widgets import AnimatedStackedWidget, CollapsibleSection, StepperBar
 from gui.worker import PipelineWorker
 from gui.dialogs.fuzzy_match_dialog import FuzzyMatchDialog
+from gui.dialogs.project_setup_dialog import ProjectSetupDialog
+from gui.dialogs.iso_setup_dialog import IsoSetupDialog
 from gui.tabs.tab_pipeline import PipelineTabMixin
 from gui.tabs.tab_json import JsonTabMixin
 
@@ -48,7 +51,11 @@ _STEPPER_LABELS = ["專案設定", "ISO 比對", "JSON 匯出"]
 class MainWindow(QMainWindow, PipelineTabMixin, JsonTabMixin):
     """管線流程工具 v4 主視窗。"""
 
-    def __init__(self):
+    def __init__(
+        self,
+        dlldir: str | None = None,
+        first_try_source: str | None = None,
+    ):
         super().__init__()
         self.setWindowTitle(APP_TITLE)
         self.setMinimumSize(1060, 680)
@@ -58,6 +65,10 @@ class MainWindow(QMainWindow, PipelineTabMixin, JsonTabMixin):
         self._iso_match_df = None
         self._v2_iso_df = None
         self._v2_live_filters: dict = {}
+
+        # Navis 模式參數（延遲到 show 之後處理）
+        self._navis_dlldir = dlldir
+        self._navis_first_try = first_try_source
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -91,6 +102,11 @@ class MainWindow(QMainWindow, PipelineTabMixin, JsonTabMixin):
 
         # 初始狀態
         self._update_file_status()
+
+        # Navis 模式：延遲啟動設定流程
+        if self._navis_dlldir and self._navis_first_try:
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(100, self._run_navis_setup)
 
     # ════════════════════════════════════════
     #  Sidebar
@@ -231,6 +247,68 @@ class MainWindow(QMainWindow, PipelineTabMixin, JsonTabMixin):
 
     def _on_step_clicked(self, idx: int):
         self._on_nav_clicked(idx)
+
+    # ════════════════════════════════════════
+    #  Navis 啟動流程
+    # ════════════════════════════════════════
+
+    def _run_navis_setup(self):
+        """Navis 模式啟動流程：專案設定 → ISO 欄位設定 → 自動執行。"""
+        # Step 1: 專案初始化（建立工作區 + 複製檔案）
+        setup_dlg = ProjectSetupDialog(
+            self,
+            dlldir=self._navis_dlldir,
+            first_try_source=self._navis_first_try,
+        )
+        if setup_dlg.exec() != QDialog.DialogCode.Accepted:
+            self._log("使用者取消專案初始化。")
+            return
+
+        project_dir = setup_dlg.project_dir
+        iso_dest = setup_dlg.iso_list_dest
+
+        # 回寫到 UI
+        self.txt_base_dir.setText(project_dir)
+        self.txt_first_name.setText("First_try.csv")
+        self.txt_iso_path.setText(iso_dest)
+        self._log(f"工作區已建立：{project_dir}")
+        self._log("First_try.csv 已匯入")
+        self._log(f"ISO LIST 已匯入：{os.path.basename(iso_dest)}")
+
+        # Step 2: ISO 欄位設定
+        iso_dlg = IsoSetupDialog(self, iso_dest)
+        if iso_dlg.exec() != QDialog.DialogCode.Accepted:
+            self._log("使用者取消 ISO 設定，可稍後手動設定後執行。")
+            self._update_file_status()
+            return
+
+        # 回寫 ISO 設定到 UI
+        self.cbo_iso_sheet.blockSignals(True)
+        self.cbo_iso_sheet.clear()
+        try:
+            xls = pd.ExcelFile(iso_dest, engine="openpyxl")
+            self.cbo_iso_sheet.addItems(xls.sheet_names)
+        except Exception:
+            pass
+        self.cbo_iso_sheet.setCurrentText(iso_dlg.iso_sheet)
+        self.cbo_iso_sheet.blockSignals(False)
+
+        # 載入該工作表的欄位到 combo
+        self._on_sheet_selected(iso_dlg.iso_sheet)
+
+        # 覆寫為使用者選定的值
+        self.cbo_pipe_col.setCurrentText(iso_dlg.pipe_col)
+        self.cbo_spool_col.setCurrentText(iso_dlg.spool_col)
+        self.cbo_category_col.setCurrentText(iso_dlg.category_col)
+
+        self._update_file_status()
+        self._log(f"ISO 設定完成：工作表={iso_dlg.iso_sheet}，"
+                  f"管線={iso_dlg.pipe_col}，流水號={iso_dlg.spool_col}")
+        self._log("──────────────────────────────────────")
+        self._log("✓ 初始化完成，開始自動執行全部流程…")
+
+        # Step 3: 自動執行
+        self._on_run_all()
 
     # ════════════════════════════════════════
     #  Helper methods
