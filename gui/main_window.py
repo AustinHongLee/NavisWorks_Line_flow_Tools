@@ -397,6 +397,8 @@ class MainWindow(QMainWindow, PipelineTabMixin, JsonTabMixin, InvestigationTabMi
             "loose_roles": self.txt_loose_roles.text().strip(),
             "extra_headers": self._get_extra_headers(),
             "limit_iso_cols": False,
+            "write_first_try_trace": self.chk_first_try_trace.isChecked(),
+            "write_candidates": self.chk_candidates_trace.isChecked(),
         }
 
     # ════════════════════════════════════════

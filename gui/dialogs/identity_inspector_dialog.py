@@ -226,11 +226,14 @@ class IdentityInspectorWidget(QWidget):
 
         self.tbl_first = _make_table([
             "Level",
+            "進 minus_1",
+            "排除原因",
             "DisplayName",
             "PipelineId",
+            "最佳候選",
             "Path",
         ])
-        splitter.addWidget(self._section("First_try.csv 原始命中列", self.tbl_first))
+        splitter.addWidget(self._section("First_try / trace 原始命中列", self.tbl_first))
         splitter.setSizes([150, 290, 260])
         return splitter
 
@@ -251,6 +254,8 @@ class IdentityInspectorWidget(QWidget):
             ("series_prefix", "系列前綴"),
             ("strict_3d_count", "strict 命中"),
             ("series_3d_count", "系列命中"),
+            ("identity_index_hit_count", "索引命中"),
+            ("first_try_source", "原始列來源"),
             ("normalize_events", "正規化事件"),
         ]
         for i, (key, label) in enumerate(rows, start=1):
@@ -445,8 +450,18 @@ class IdentityInspectorWidget(QWidget):
 
     @staticmethod
     def _compact_first_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
-        keys = ["Level", "DisplayName", "PipelineId", "Path"]
-        return [{key: row.get(key, "") for key in keys} for row in rows]
+        return [
+            {
+                "Level": row.get("Level", ""),
+                "進 minus_1": row.get("included_in_minus_1", ""),
+                "排除原因": row.get("exclude_reason", ""),
+                "DisplayName": row.get("DisplayName", ""),
+                "PipelineId": row.get("PipelineId", ""),
+                "最佳候選": row.get("best_candidate_normalized", ""),
+                "Path": row.get("Path", ""),
+            }
+            for row in rows
+        ]
 
     def _open_trace_from_minus(self, item: QTableWidgetItem) -> None:
         row = item.row()

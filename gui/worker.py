@@ -47,8 +47,18 @@ class PipelineWorker(QThread):
                 iso_list_path=self.p.get("iso_list_path") or None,
                 iso_sheet_name=self.p.get("iso_sheet") or None,
                 pipe_col_override=self.p.get("pipe_col") or None,
+                write_first_try_trace=bool(self.p.get("write_first_try_trace")),
+                write_candidates=bool(self.p.get("write_candidates")),
             )
             self.log_signal.emit(f"  ✓ Step1 完成，輸出 {n1} 筆")
+            if self.p.get("write_first_try_trace"):
+                self.log_signal.emit(
+                    f"  ✓ 已輸出 first_try_trace.csv：{self._path('first_try_trace.csv')}"
+                )
+            if self.p.get("write_candidates"):
+                self.log_signal.emit(
+                    f"  ✓ 已輸出 candidates.csv：{self._path('candidates.csv')}"
+                )
             self.progress_signal.emit(33, "Step1 完成")
 
             # ── Step 2 ──

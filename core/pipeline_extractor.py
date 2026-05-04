@@ -265,6 +265,10 @@ class PipelineExtractor:
         iso_list_path: Optional[str] = None,
         iso_sheet_name: Optional[str] = None,
         pipe_col_override: Optional[str] = None,
+        write_first_try_trace: bool = False,
+        first_try_trace_path: Optional[str] = None,
+        write_candidates: bool = False,
+        candidates_path: Optional[str] = None,
     ) -> int:
         if not os.path.exists(input_csv):
             raise FileNotFoundError(f"[Step1] 找不到輸入檔 First_try CSV：{input_csv}")
@@ -306,6 +310,7 @@ class PipelineExtractor:
         if "PipelineId" not in raw_df.columns:
             raw_df["PipelineId"] = ""
         raw_df = raw_df.fillna("")
+        raw_df["__source_row_idx"] = [str(i + 1) for i in range(len(raw_df))]
 
         known_iso_keys: set[str] = set()
         if iso_list_path and os.path.exists(iso_list_path):
@@ -342,6 +347,154 @@ class PipelineExtractor:
                 df_src[col] = resolved[col] if col in resolved else ""
             return df_src
 
+        def _trace_path() -> str:
+            return first_try_trace_path or os.path.join(
+                os.path.dirname(os.path.abspath(out_csv)),
+                "first_try_trace.csv",
+            )
+
+        def _candidates_path() -> str:
+            return candidates_path or os.path.join(
+                os.path.dirname(os.path.abspath(out_csv)),
+                "candidates.csv",
+            )
+
+        def _classify_exclusion(row: pd.Series, resolved_known: bool) -> tuple[str, str]:
+            if not resolved_known:
+                return "out_of_scan_scope", "不在本次掃描範圍"
+            values = [
+                str(row.get("PipelineId", "")),
+                str(row.get("DisplayName", "")),
+            ]
+            if any(IdentityResolver._is_file_like(v) for v in values if v):
+                return "file_like", "看起來是模型/檔案節點，不作為管線身份"
+            if any(IdentityResolver._is_structural(v) for v in values if v):
+                return "structural", "看起來是結構/支架類節點，不作為管線身份"
+            return "no_id", "沒有找到符合管線格式或 ISO 白名單的身份候選"
+
+        def _write_debug_outputs(
+            scan_df: pd.DataFrame,
+            included_df: pd.DataFrame,
+        ) -> None:
+            if not write_first_try_trace and not write_candidates:
+                return
+            included_source = set(
+                included_df.get("__source_row_idx", pd.Series([], dtype=str))
+                .astype(str)
+                .tolist()
+            )
+            scan_by_source = {
+                str(r.get("__source_row_idx", "")): r
+                for _, r in scan_df.iterrows()
+            }
+            minus_row_by_source = {
+                str(src): str(i + 1)
+                for i, src in enumerate(
+                    included_df.get("__source_row_idx", pd.Series([], dtype=str))
+                    .astype(str)
+                    .tolist()
+                )
+            }
+
+            if write_first_try_trace:
+                trace_rows: list[dict[str, object]] = []
+                for _, raw_row in raw_df.iterrows():
+                    source_idx = str(raw_row.get("__source_row_idx", ""))
+                    resolved_row = scan_by_source.get(source_idx)
+                    resolved_known = resolved_row is not None
+                    if resolved_known:
+                        resolved_row = resolved_row.fillna("")
+                    included = source_idx in included_source
+                    reason = ""
+                    detail = ""
+                    if not included:
+                        reason, detail = _classify_exclusion(raw_row, resolved_known)
+                    trace_rows.append(
+                        {
+                            "source_row_idx": source_idx,
+                            "Path": raw_row.get("Path", ""),
+                            "DisplayName": raw_row.get("DisplayName", ""),
+                            "Class": raw_row.get("Class", ""),
+                            "Level": raw_row.get("Level", ""),
+                            "PipelineId": raw_row.get("PipelineId", ""),
+                            "candidate_count": (
+                                resolved_row.get("CandidateCount", "")
+                                if resolved_known else ""
+                            ),
+                            "best_candidate_raw": (
+                                resolved_row.get("Raw_3D_PipeCode", "")
+                                if resolved_known else ""
+                            ),
+                            "best_candidate_normalized": (
+                                resolved_row.get("ISO_Match_Key", "")
+                                if resolved_known else ""
+                            ),
+                            "best_candidate_source": (
+                                resolved_row.get("MatchSource", "")
+                                if resolved_known else ""
+                            ),
+                            "included_in_minus_1": "1" if included else "0",
+                            "exclude_reason": reason,
+                            "exclude_detail": detail,
+                            "minus_1_row_idx": minus_row_by_source.get(source_idx, ""),
+                        }
+                    )
+                pd.DataFrame(trace_rows).to_csv(
+                    _trace_path(),
+                    index=False,
+                    encoding="utf-8-sig",
+                )
+
+            if write_candidates:
+                candidate_rows: list[dict[str, object]] = []
+                for _, scan_row in scan_df.iterrows():
+                    source_idx = str(scan_row.get("__source_row_idx", ""))
+                    candidates = resolver.collect_candidates(scan_row)
+                    for idx, cand in enumerate(candidates, start=1):
+                        candidate_rows.append(
+                            {
+                                "source_row_idx": source_idx,
+                                "minus_1_row_idx": minus_row_by_source.get(source_idx, ""),
+                                "included_in_minus_1": (
+                                    "1" if source_idx in included_source else "0"
+                                ),
+                                "candidate_idx": idx,
+                                "raw": cand.raw,
+                                "normalized": cand.normalized,
+                                "source": cand.source,
+                                "score": f"{cand.score:.4f}",
+                                "reason": cand.reason,
+                                "trace_events": " | ".join(cand.trace_events),
+                                "Path": scan_row.get("Path", ""),
+                                "DisplayName": scan_row.get("DisplayName", ""),
+                                "Level": scan_row.get("Level", ""),
+                                "PipelineId": scan_row.get("PipelineId", ""),
+                            }
+                        )
+                pd.DataFrame(
+                    candidate_rows,
+                    columns=[
+                        "source_row_idx",
+                        "minus_1_row_idx",
+                        "included_in_minus_1",
+                        "candidate_idx",
+                        "raw",
+                        "normalized",
+                        "source",
+                        "score",
+                        "reason",
+                        "trace_events",
+                        "Path",
+                        "DisplayName",
+                        "Level",
+                        "PipelineId",
+                    ],
+                ).to_csv(
+                    _candidates_path(),
+                    index=False,
+                    encoding="utf-8-sig",
+                )
+
         def _attach_scope_columns(df_src: pd.DataFrame) -> pd.DataFrame:
             contexts = df_src.apply(
                 lambda r: parse_scope_context(
@@ -364,8 +517,10 @@ class PipelineExtractor:
             df = raw_df.copy()
             df = _attach_identity_columns(df)
             mask = df["ISO_Match_Key"].astype(str).str.strip().ne("")
+            scan_df = df.copy()
             df = df[mask].copy()
             df = _attach_scope_columns(df)
+            _write_debug_outputs(scan_df, df)
             out_cols = [
                 "Path", "DisplayName", "Class", "Level",
                 "Raw_3D_PipeCode", "ISO_Match_Key",
@@ -384,8 +539,10 @@ class PipelineExtractor:
             ].copy()
 
             df = _attach_identity_columns(df)
+            scan_df = df.copy()
             df = df[df["ISO_Match_Key"].astype(str).str.strip().ne("")].copy()
             df = _attach_scope_columns(df)
+            _write_debug_outputs(scan_df, df)
 
             out_cols = [
                 "Path", "DisplayName", "Class", "Level",
@@ -416,6 +573,10 @@ class PipelineExtractor:
             result_records.extend(sub_df.to_dict("records"))
 
         if not result_records:
+            _write_debug_outputs(
+                pd.DataFrame(columns=list(raw_df.columns)),
+                pd.DataFrame(columns=list(raw_df.columns)),
+            )
             pd.DataFrame(
                 columns=["Path", "DisplayName", "Class", "Level"]
             ).to_csv(out_csv, index=False, encoding="utf-8-sig")
@@ -424,8 +585,10 @@ class PipelineExtractor:
         df = pd.DataFrame(result_records).fillna("")
 
         df = _attach_identity_columns(df)
+        scan_df = df.copy()
         df = df[df["ISO_Match_Key"].astype(str).str.strip().ne("")].copy()
         df = _attach_scope_columns(df)
+        _write_debug_outputs(scan_df, df)
 
         print("[Step1] final columns in minus_1:", list(df.columns))
         df.to_csv(out_csv, index=False, encoding="utf-8-sig")

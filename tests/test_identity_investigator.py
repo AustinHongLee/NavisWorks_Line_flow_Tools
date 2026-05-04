@@ -75,6 +75,48 @@ class IdentityInvestigatorTests(unittest.TestCase):
         self.assertEqual(len(result["first_try_rows"]), 2)
         self.assertEqual(result["level_summary"][0]["Level"], "4")
 
+    def test_prefers_first_try_trace_when_available(self):
+        with tempfile.TemporaryDirectory(prefix="tmp_unit_", dir=os.getcwd()) as tmp:
+            pd.DataFrame(
+                [
+                    {
+                        "source_row_idx": "1",
+                        "Path": "/A/TRIM-6FL216Q-N3",
+                        "DisplayName": "/TRIM-6FL216Q-N3",
+                        "Class": "Group",
+                        "Level": "4",
+                        "PipelineId": "/TRIM-6FL216Q-N3",
+                        "included_in_minus_1": "1",
+                        "exclude_reason": "",
+                        "best_candidate_normalized": "TRIM-6FL216Q-N3",
+                        "minus_1_row_idx": "1",
+                    },
+                    {
+                        "source_row_idx": "2",
+                        "Path": "/A/TRIM-6FL216Q-N3/B1",
+                        "DisplayName": "/TRIM-6FL216Q-N3/B1",
+                        "Class": "Group",
+                        "Level": "5",
+                        "PipelineId": "/TRIM-6FL216Q-N3/B1",
+                        "included_in_minus_1": "0",
+                        "exclude_reason": "no_id",
+                        "best_candidate_normalized": "",
+                        "minus_1_row_idx": "",
+                    },
+                ]
+            ).to_csv(
+                os.path.join(tmp, "first_try_trace.csv"),
+                index=False,
+                encoding="utf-8-sig",
+            )
+
+            result = investigate_identity("TRIM-6FL216Q-N3", make_paths(tmp))
+
+        self.assertEqual(result["family"]["first_try_source"], "first_try_trace.csv")
+        self.assertEqual(len(result["first_try_rows"]), 2)
+        reasons = {row["exclude_reason"] for row in result["first_try_rows"]}
+        self.assertIn("no_id", reasons)
+
 
 if __name__ == "__main__":
     unittest.main()

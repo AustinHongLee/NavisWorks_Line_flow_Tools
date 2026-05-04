@@ -155,6 +155,23 @@ def build_resolved_mapping(
         )
     result.to_csv(output_path, index=False, encoding="utf-8-sig")
 
+    identity_index_path = ""
+    minus1_path = os.path.join(
+        os.path.dirname(os.path.abspath(output_path)),
+        "123_minus_1.csv",
+    )
+    if os.path.exists(minus1_path):
+        try:
+            from core.identity_index import build_identity_index
+
+            identity_index_path = build_identity_index(
+                output_path,
+                minus1_path,
+            )
+            _log(f"[ResolvedMapping] 已建立調查索引：{identity_index_path}")
+        except Exception as exc:
+            _log(f"[ResolvedMapping] 調查索引建立失敗，略過：{exc}")
+
     total = int(len(result))
     resolved = int((result["Resolved"].astype(str) == "1").sum())
     needs = int((result["ResolutionStatus"] == "needs_decision").sum())
@@ -166,6 +183,7 @@ def build_resolved_mapping(
 
     return {
         "path": output_path,
+        "identity_index_path": identity_index_path,
         "total": total,
         "resolved": resolved,
         "needs_decision": needs,

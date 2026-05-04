@@ -115,6 +115,27 @@ class PipelineTabMixin:
         ft_row.addStretch()
         pp.addLayout(ft_row)
 
+        debug_row = QVBoxLayout()
+        debug_row.setSpacing(4)
+        self.chk_first_try_trace = QCheckBox(
+            "輸出 first_try_trace.csv（排查用，檔案較大）"
+        )
+        self.chk_first_try_trace.setToolTip(
+            "保留 First_try.csv 每一列是否進入 minus_1、排除原因與最佳候選。"
+        )
+        debug_row.addWidget(self.chk_first_try_trace)
+        self.chk_candidates_trace = QCheckBox(
+            "輸出 candidates.csv（保留全部身份候選）"
+        )
+        self.chk_candidates_trace.setToolTip(
+            "保留每個掃描列的所有身份候選，方便調查 Step1 為什麼選某個 Raw。"
+        )
+        debug_row.addWidget(self.chk_candidates_trace)
+        debug_row.addWidget(make_note(
+            "排查輸出預設關閉；遇到找不到、抓錯層、分岔時再打開。"
+        ))
+        pp.addLayout(debug_row)
+
         lay.addWidget(p_proj)
 
         # ── 抽取 / 群組參數卡片 ──
