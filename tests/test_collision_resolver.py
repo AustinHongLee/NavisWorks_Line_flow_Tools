@@ -60,6 +60,57 @@ class CollisionResolverTests(unittest.TestCase):
             self.assertEqual(rejected["ResolutionStatus"], "user_rejected")
             self.assertEqual(rejected["NeedsDecision"], "0")
 
+    def test_load_and_apply_level_decision_when_parent_is_same(self):
+        with tempfile.TemporaryDirectory(prefix="tmp_unit_") as tmp:
+            path = os.path.join(tmp, "resolved_mapping.csv")
+            pd.DataFrame(
+                [
+                    {
+                        "Resolved": "0",
+                        "ResolutionStatus": "needs_decision",
+                        "流水號": "10",
+                        "Raw_3D_PipeCode": "/A-LINE",
+                        "ParentArea": "/A",
+                        "ScopeRoot": "/A",
+                        "PipeNodeLevel": "4",
+                        "NeedsDecision": "1",
+                    },
+                    {
+                        "Resolved": "0",
+                        "ResolutionStatus": "needs_decision",
+                        "流水號": "10",
+                        "Raw_3D_PipeCode": "/A-LINE/B1",
+                        "ParentArea": "/A",
+                        "ScopeRoot": "/A",
+                        "PipeNodeLevel": "5",
+                        "NeedsDecision": "1",
+                    },
+                ]
+            ).to_csv(path, index=False, encoding="utf-8-sig")
+
+            groups = load_collision_groups(path)
+            self.assertEqual(len(groups), 1)
+            self.assertEqual(groups[0]["area_col"], "PipeNodeLevel")
+            self.assertEqual(
+                {c["area"] for c in groups[0]["choices"]},
+                {"4", "5"},
+            )
+
+            stats = apply_collision_decisions(
+                path,
+                {"10": {"area_col": "PipeNodeLevel", "area": "4"}},
+            )
+            self.assertEqual(stats["selected"], 1)
+            self.assertEqual(stats["rejected"], 1)
+
+            result = pd.read_csv(path, dtype=str, encoding="utf-8-sig").fillna("")
+            selected = result[result["PipeNodeLevel"] == "4"].iloc[0]
+            rejected = result[result["PipeNodeLevel"] == "5"].iloc[0]
+            self.assertEqual(selected["Resolved"], "1")
+            self.assertEqual(selected["ResolutionStatus"], "user_selected")
+            self.assertEqual(rejected["Resolved"], "0")
+            self.assertEqual(rejected["ResolutionStatus"], "user_rejected")
+
 
 if __name__ == "__main__":
     unittest.main()

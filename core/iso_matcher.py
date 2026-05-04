@@ -1440,30 +1440,47 @@ class IsoMatcher:
                 merged[c] = ""
             merged[c] = merged[c].astype(str).str.strip()
 
+        def _unique_nonempty(sub: pd.DataFrame, col: str) -> list[str]:
+            if col not in sub.columns:
+                return []
+            return CommonUtils.unique_preserve(
+                [
+                    str(v).strip()
+                    for v in sub[col].tolist()
+                    if str(v).strip()
+                ]
+            )
+
+        def _collision_dimension(sub: pd.DataFrame) -> tuple[str, list[str]]:
+            dimensions = [
+                ("ParentArea", _unique_nonempty(sub, "ParentArea")),
+                ("ScopeRoot", _unique_nonempty(sub, "ScopeRoot")),
+                ("PipeNodeLevel", _unique_nonempty(sub, "PipeNodeLevel")),
+                ("Raw_3D_PipeCode", _unique_nonempty(sub, "Raw_3D_PipeCode")),
+                ("PipeNodePath", _unique_nonempty(sub, "PipeNodePath")),
+            ]
+            multi = [(name, values) for name, values in dimensions if len(values) > 1]
+            if multi:
+                return max(multi, key=lambda item: len(item[1]))
+            for name, values in dimensions:
+                if values:
+                    return name, values
+            return "", []
+
         collision_info: Dict[str, Dict[str, object]] = {}
         if "流水號" in merged.columns:
             for spool, sub in merged.groupby("流水號", sort=False):
                 spool_key = str(spool).strip()
                 if not spool_key:
                     continue
-                parents = CommonUtils.unique_preserve(
-                    [
-                        str(v).strip()
-                        for v in sub["ParentArea"].tolist()
-                        if str(v).strip()
-                    ]
-                )
-                if len(parents) <= 1:
-                    parents = CommonUtils.unique_preserve(
-                        [
-                            str(v).strip()
-                            for v in sub["ScopeRoot"].tolist()
-                            if str(v).strip()
-                        ]
-                    )
+                dimension, parents = _collision_dimension(sub)
                 collision_info[spool_key] = {
                     "count": len(parents),
-                    "parents": " | ".join(parents),
+                    "parents": (
+                        f"{dimension}: " + " | ".join(parents)
+                        if dimension and parents
+                        else ""
+                    ),
                     "needs": 1 if len(parents) > 1 else 0,
                 }
 

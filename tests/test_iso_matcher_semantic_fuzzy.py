@@ -234,6 +234,119 @@ class IsoMatcherSemanticFuzzyTests(unittest.TestCase):
             self.assertEqual(mapped["ResolvedBy"], "user")
             self.assertEqual(mapped["MatchScore"], "0.82")
 
+    def test_run_marks_same_iso_in_multiple_roots_as_collision(self):
+        with tempfile.TemporaryDirectory(prefix="tmp_unit_", dir=os.getcwd()) as tmp:
+            base = Path(tmp)
+            minus_path = base / "123_minus_2.csv"
+            iso_path = base / "ISO_LIST.xlsx"
+            out_path = base / "iso_match.xlsx"
+            mapping_path = base / "resolved_mapping.csv"
+
+            pd.DataFrame(
+                [
+                    {
+                        "ISO_Match_Key": "1-S11U-15001-002",
+                        "Raw_3D_PipeCode": "/1-S11U-15001-002",
+                        "PipeNodePath": "model___/100Area___/1-S11U-15001-002",
+                        "ScopeRoot": "/100Area",
+                        "ParentArea": "/100Area",
+                        "PipeNodeLevel": "2",
+                    },
+                    {
+                        "ISO_Match_Key": "1-S11U-15001-002",
+                        "Raw_3D_PipeCode": "/1-S11U-15001-002",
+                        "PipeNodePath": "model___/200Area___/1-S11U-15001-002",
+                        "ScopeRoot": "/200Area",
+                        "ParentArea": "/200Area",
+                        "PipeNodeLevel": "2",
+                    },
+                ]
+            ).to_csv(minus_path, index=False, encoding="utf-8-sig")
+            pd.DataFrame(
+                [{"流水號": "10", "Line num": "/1-S11U-15001-002"}]
+            ).to_excel(iso_path, sheet_name="DWG NO.ALL", index=False)
+
+            IsoMatcher().run(
+                base_dir=str(base),
+                minus_csv_path=str(minus_path),
+                iso_output_path=str(out_path),
+                iso_list_path=str(iso_path),
+                iso_sheet_name="DWG NO.ALL",
+                pipe_col_override="Line num",
+                spool_col_override="流水號",
+                log_fn=lambda _msg: None,
+            )
+
+            result = pd.read_excel(
+                out_path,
+                sheet_name="結果",
+                dtype=str,
+                engine="openpyxl",
+            ).fillna("")
+            self.assertEqual(len(result), 2)
+            self.assertEqual(set(result["NeedsDecision"].astype(str)), {"1"})
+            self.assertTrue(
+                result["CollisionParents"].str.contains("ParentArea").all()
+            )
+
+            stats = build_resolved_mapping(str(out_path), str(mapping_path))
+            self.assertEqual(stats["resolved"], 0)
+            self.assertEqual(stats["needs_decision"], 2)
+
+    def test_run_marks_same_iso_in_multiple_levels_as_collision(self):
+        with tempfile.TemporaryDirectory(prefix="tmp_unit_", dir=os.getcwd()) as tmp:
+            base = Path(tmp)
+            minus_path = base / "123_minus_2.csv"
+            iso_path = base / "ISO_LIST.xlsx"
+            out_path = base / "iso_match.xlsx"
+
+            pd.DataFrame(
+                [
+                    {
+                        "ISO_Match_Key": "1-S11U-15001-002",
+                        "Raw_3D_PipeCode": "/1-S11U-15001-002",
+                        "PipeNodePath": "model___/100Area___/1-S11U-15001-002",
+                        "ScopeRoot": "/100Area",
+                        "ParentArea": "/100Area",
+                        "PipeNodeLevel": "4",
+                    },
+                    {
+                        "ISO_Match_Key": "1-S11U-15001-002",
+                        "Raw_3D_PipeCode": "/1-S11U-15001-002/B1",
+                        "PipeNodePath": "model___/100Area___/1-S11U-15001-002___/1-S11U-15001-002/B1",
+                        "ScopeRoot": "/100Area",
+                        "ParentArea": "/100Area",
+                        "PipeNodeLevel": "5",
+                    },
+                ]
+            ).to_csv(minus_path, index=False, encoding="utf-8-sig")
+            pd.DataFrame(
+                [{"流水號": "10", "Line num": "/1-S11U-15001-002"}]
+            ).to_excel(iso_path, sheet_name="DWG NO.ALL", index=False)
+
+            IsoMatcher().run(
+                base_dir=str(base),
+                minus_csv_path=str(minus_path),
+                iso_output_path=str(out_path),
+                iso_list_path=str(iso_path),
+                iso_sheet_name="DWG NO.ALL",
+                pipe_col_override="Line num",
+                spool_col_override="流水號",
+                log_fn=lambda _msg: None,
+            )
+
+            result = pd.read_excel(
+                out_path,
+                sheet_name="結果",
+                dtype=str,
+                engine="openpyxl",
+            ).fillna("")
+            self.assertEqual(len(result), 2)
+            self.assertEqual(set(result["NeedsDecision"].astype(str)), {"1"})
+            self.assertTrue(
+                result["CollisionParents"].str.contains("PipeNodeLevel").all()
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

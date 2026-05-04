@@ -30,7 +30,7 @@ class CollisionDecisionDialog(QDialog):
         self.resize(980, 620)
         self._groups = groups
         self._current_idx = 0
-        self._decisions: dict[str, str] = {}
+        self._decisions: dict[str, object] = {}
         self._build_ui()
         if groups:
             self._load_group(0)
@@ -158,12 +158,17 @@ class CollisionDecisionDialog(QDialog):
         self._refresh_status()
 
     def _choose_area(self, area: str) -> None:
-        spool = str(self._groups[self._current_idx].get("spool", ""))
+        group = self._groups[self._current_idx]
+        spool = str(group.get("spool", ""))
+        area_col = str(group.get("area_col", "ParentArea"))
         if spool and area:
-            self._decisions[spool] = area
+            self._decisions[spool] = {
+                "area_col": area_col,
+                "area": area,
+            }
             item = self._spool_list.item(self._current_idx)
             if item:
-                item.setText(f"{spool}  ->  {area}")
+                item.setText(f"{spool}  ->  {area_col}={area}")
                 item.setForeground(QColor("#059669"))
         self._load_group(self._current_idx)
 

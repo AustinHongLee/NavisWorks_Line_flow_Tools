@@ -19,6 +19,33 @@ def _read_mapping(path: str) -> pd.DataFrame:
     return pd.read_csv(path, dtype=str, encoding="utf-8-sig").fillna("")
 
 
+CHOICE_COLUMNS = [
+    "ParentArea",
+    "ScopeRoot",
+    "PipeNodeLevel",
+    "Raw_3D_PipeCode",
+    "PipeNodePath",
+]
+
+
+def _choice_col_for_sub(df: pd.DataFrame) -> str:
+    """Choose the most useful dimension for a collision group."""
+    fallback = ""
+    for col in CHOICE_COLUMNS:
+        if col not in df.columns:
+            continue
+        values = {
+            str(v).strip()
+            for v in df[col].tolist()
+            if str(v).strip()
+        }
+        if values and not fallback:
+            fallback = col
+        if len(values) > 1:
+            return col
+    return fallback
+
+
 def load_collision_groups(mapping_path: str) -> list[dict[str, object]]:
     """讀取 ``NeedsDecision=1`` 的 collision 群組。"""
     df = _read_mapping(mapping_path)
@@ -27,15 +54,20 @@ def load_collision_groups(mapping_path: str) -> list[dict[str, object]]:
     if missing:
         raise ValueError("resolved_mapping 缺少欄位：" + ", ".join(missing))
 
-    area_col = "ParentArea" if "ParentArea" in df.columns else "ScopeRoot"
-    if area_col not in df.columns:
-        raise ValueError("resolved_mapping 缺少 ParentArea / ScopeRoot 欄位")
+    if not any(col in df.columns for col in CHOICE_COLUMNS):
+        raise ValueError(
+            "resolved_mapping 缺少 collision 決策欄位："
+            + " / ".join(CHOICE_COLUMNS)
+        )
 
     pending = df[df["NeedsDecision"].apply(_truthy)].copy()
     groups: list[dict[str, object]] = []
     for spool, sub in pending.groupby("流水號", sort=False):
         spool_key = str(spool).strip()
         if not spool_key:
+            continue
+        area_col = _choice_col_for_sub(sub)
+        if not area_col:
             continue
         choices: list[dict[str, object]] = []
         for area, area_sub in sub.groupby(area_col, sort=False):
@@ -75,23 +107,32 @@ def load_collision_groups(mapping_path: str) -> list[dict[str, object]]:
 
 def apply_collision_decisions(
     mapping_path: str,
-    decisions: dict[str, str],
+    decisions: dict[str, object],
     output_path: Optional[str] = None,
 ) -> dict[str, int | str]:
-    """套用 ``流水號 -> ParentArea/ScopeRoot`` 的人工決策。"""
+    """套用 collision 人工決策。
+
+    ``decisions`` 支援舊格式 ``{"流水號": "區域值"}``，也支援新格式
+    ``{"流水號": {"area_col": "PipeNodeLevel", "area": "5"}}``。
+    """
     df = _read_mapping(mapping_path)
     if output_path is None:
         output_path = mapping_path
     if not decisions:
         return {"path": output_path, "selected": 0, "rejected": 0, "spools": 0}
 
-    area_col = "ParentArea" if "ParentArea" in df.columns else "ScopeRoot"
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     selected = 0
     rejected = 0
 
-    for spool, area in decisions.items():
+    for spool, decision in decisions.items():
         spool_key = str(spool).strip()
+        if isinstance(decision, dict):
+            area_col = str(decision.get("area_col", "")).strip()
+            area = decision.get("area", "")
+        else:
+            area_col = ""
+            area = decision
         area_key = str(area).strip()
         if not spool_key or not area_key:
             continue
@@ -99,6 +140,10 @@ def apply_collision_decisions(
         pending_mask = df["NeedsDecision"].apply(_truthy) if "NeedsDecision" in df.columns else spool_mask
         target = spool_mask & pending_mask
         if not target.any():
+            continue
+        if not area_col or area_col not in df.columns:
+            area_col = _choice_col_for_sub(df[target])
+        if not area_col or area_col not in df.columns:
             continue
         choose = target & df[area_col].astype(str).str.strip().eq(area_key)
         reject = target & ~choose
