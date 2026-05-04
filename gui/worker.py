@@ -57,7 +57,8 @@ class PipelineWorker(QThread):
                 )
             if self.p.get("write_candidates"):
                 self.log_signal.emit(
-                    f"  ✓ 已輸出 candidates.csv：{self._path('candidates.csv')}"
+                    "  ✓ 已輸出 candidates.csv（含 ISO 反向召回候選）："
+                    f"{self._path('candidates.csv')}"
                 )
             self.progress_signal.emit(33, "Step1 完成")
 

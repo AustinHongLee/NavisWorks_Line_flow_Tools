@@ -170,6 +170,7 @@ def investigate_identity(
     resolved = _read_csv(paths.resolved_mapping_csv)
     iso_match = _read_iso_match(paths.iso_match_xlsx)
     identity_index = _read_csv(paths.identity_index_csv)
+    candidates = _read_csv(paths.candidates_csv)
 
     iso_source = resolved if not resolved.empty else iso_match
     iso_mask = _text_mask(
@@ -222,6 +223,24 @@ def investigate_identity(
     )
     index_hits = identity_index[index_mask].copy() if not identity_index.empty else pd.DataFrame()
 
+    candidate_mask = _text_mask(
+        candidates,
+        [
+            "candidate_kind",
+            "iso_candidate",
+            "raw",
+            "normalized",
+            "matched_terms",
+            "missing_terms",
+            "reason",
+            "Path",
+            "DisplayName",
+            "PipelineId",
+        ],
+        needles,
+    )
+    candidate_hits = candidates[candidate_mask].copy() if not candidates.empty else pd.DataFrame()
+
     family = {
         "query": raw_query,
         "normalized": normalized,
@@ -235,6 +254,7 @@ def investigate_identity(
         "first_try_hit_count": str(len(first_hits)),
         "iso_hit_count": str(len(iso_hits)),
         "identity_index_hit_count": str(len(index_hits)),
+        "candidate_hit_count": str(len(candidate_hits)),
         "first_try_source": first_source,
     }
     if not minus1.empty and "ISO_Match_Key" in minus1.columns:
@@ -287,6 +307,24 @@ def investigate_identity(
         "exclude_detail",
         "best_candidate_normalized",
         "minus_1_row_idx",
+        "recall_candidate_count",
+        "best_recall_iso",
+        "best_recall_score",
+        "best_recall_raw",
+        "best_recall_terms",
+        "best_recall_reason",
+    ]
+    candidate_columns = [
+        "candidate_kind",
+        "score",
+        "iso_candidate",
+        "raw",
+        "normalized",
+        "source",
+        "matched_terms",
+        "reason",
+        "review_status",
+        "Path",
     ]
 
     return {
@@ -297,6 +335,7 @@ def investigate_identity(
         "level_summary": _level_summary(minus_hits),
         "minus1_rows": _records(minus_hits, minus_columns, max_rows),
         "first_try_rows": _records(first_hits, first_columns, max_rows),
+        "candidate_rows": _records(candidate_hits, candidate_columns, max_rows),
         "identity_index_rows": _records(index_hits, [
             "iso_spool",
             "iso_pipe_raw",
@@ -309,6 +348,7 @@ def investigate_identity(
         "has_first_try": os.path.exists(paths.first_csv),
         "has_first_try_trace": os.path.exists(paths.first_try_trace_csv),
         "has_identity_index": os.path.exists(paths.identity_index_csv),
+        "has_candidates": os.path.exists(paths.candidates_csv),
         "has_minus1": os.path.exists(paths.minus1_csv),
         "has_iso_source": os.path.exists(paths.resolved_mapping_csv) or os.path.exists(paths.iso_match_xlsx),
     }

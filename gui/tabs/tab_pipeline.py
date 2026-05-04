@@ -125,10 +125,10 @@ class PipelineTabMixin:
         )
         debug_row.addWidget(self.chk_first_try_trace)
         self.chk_candidates_trace = QCheckBox(
-            "輸出 candidates.csv（保留全部身份候選）"
+            "輸出 candidates.csv（身份候選 + ISO 反向召回）"
         )
         self.chk_candidates_trace.setToolTip(
-            "保留每個掃描列的所有身份候選，方便調查 Step1 為什麼選某個 Raw。"
+            "保留每個掃描列的身份候選；找不到身份時，額外用 ISO token 回查 First_try 產生待確認候選。"
         )
         debug_row.addWidget(self.chk_candidates_trace)
         debug_row.addWidget(make_note(

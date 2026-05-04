@@ -963,6 +963,8 @@ class IsoMatcher:
             min_score: float = 0.0,
             forced_score: float | None = None,
             forced_reason: str | None = None,
+            raw_override: str | None = None,
+            trace_override: str | None = None,
         ) -> None:
             cand_3d = str(cand_3d).strip()
             if not cand_3d or cand_3d in seen:
@@ -981,23 +983,67 @@ class IsoMatcher:
             seen.add(cand_3d)
             if source_hint and source_hint not in reason:
                 reason = f"{reason}; {source_hint}" if reason else source_hint
-            trace = (
+            raw_3d = raw_override or norm_to_raw.get(cand_3d, cand_3d)
+            trace = trace_override or (
                 TraceBuilder()
                 .add("match", "fuzzy_candidate")
                 .add("iso_key", iso_line)
                 .add("line_3d", cand_3d)
-                .add("raw", norm_to_raw.get(cand_3d, cand_3d))
+                .add("raw", raw_3d)
                 .add("score", f"{score:.2f}")
                 .add("reason", reason)
                 .build()
             )
             bucket.append({
                 "line_3d": cand_3d,
-                "raw_3d": norm_to_raw.get(cand_3d, cand_3d),
+                "raw_3d": raw_3d,
                 "score": score,
                 "reason": reason,
                 "trace": trace,
             })
+
+        recall_candidates_by_iso: dict[str, list[dict]] = {}
+        recall_path = os.path.join(base_dir, "candidates.csv")
+        if os.path.exists(recall_path):
+            try:
+                recall_df = pd.read_csv(
+                    recall_path,
+                    dtype=str,
+                    encoding="utf-8-sig",
+                    low_memory=False,
+                ).fillna("")
+                if "candidate_kind" in recall_df.columns:
+                    recall_df = recall_df[
+                        recall_df["candidate_kind"].astype(str).eq("iso_reverse_recall")
+                    ].copy()
+                if "iso_candidate" in recall_df.columns:
+                    recall_df["__recall_iso_norm"] = recall_df["iso_candidate"].apply(
+                        lambda value: normalize_line_v2(value)[0]
+                    )
+                    for iso_key, sub in recall_df.groupby("__recall_iso_norm", sort=False):
+                        bucket: list[dict] = []
+                        for _, crow in sub.iterrows():
+                            line_3d = str(crow.get("normalized", "")).strip()
+                            raw_3d = str(crow.get("raw", "")).strip()
+                            if not line_3d:
+                                continue
+                            try:
+                                score = float(str(crow.get("score", "0")).strip() or 0)
+                            except Exception:
+                                score = 0.0
+                            bucket.append({
+                                "line_3d": line_3d,
+                                "raw_3d": raw_3d or line_3d,
+                                "score": min(max(score, 0.0), 0.88),
+                                "reason": str(crow.get("reason", "")).strip()
+                                or "ISO 反向召回候選",
+                                "trace": str(crow.get("trace_events", "")).strip(),
+                            })
+                        bucket.sort(key=lambda item: -float(item.get("score", 0)))
+                        if bucket:
+                            recall_candidates_by_iso[str(iso_key).strip()] = bucket[:10]
+            except Exception as exc:
+                _log(f"Phase4: 讀取 ISO 反向召回候選失敗（略過）：{exc}")
 
         self.fuzzy_unmatched = []
         for _, row in iso_still_unmatched.iterrows():
@@ -1057,6 +1103,21 @@ class IsoMatcher:
                         cand_3d,
                         source_hint="編號主體候選",
                         min_score=0.18,
+                    )
+
+            # ── 第四點五輪：Step1 candidates.csv 的 ISO 反向召回候選 ──
+            if len(candidates) < 8:
+                for recall in recall_candidates_by_iso.get(iso_line, []):
+                    _add_candidate(
+                        candidates,
+                        seen_3d,
+                        iso_line,
+                        recall.get("line_3d", ""),
+                        source_hint="ISO 反向召回",
+                        forced_score=float(recall.get("score", 0.0)),
+                        forced_reason=str(recall.get("reason", "")),
+                        raw_override=str(recall.get("raw_3d", "")),
+                        trace_override=str(recall.get("trace", "")),
                     )
 
             # ── 第五輪：全文搜索（前綴不同的候選）──

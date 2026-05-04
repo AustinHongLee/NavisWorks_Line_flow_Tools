@@ -80,7 +80,7 @@ class PipelineRegressionTests(unittest.TestCase):
         self.assertEqual(pipe["ISO_Match_Key"], "4-S11-P-60338-H50")
         self.assertIn("去末段後命中", pipe["IdentityReason"])
 
-    def test_identity_resolver_accepts_iso_suffix_family(self):
+    def test_identity_resolver_does_not_promote_iso_suffix_family(self):
         known = {"TRIM-6FL216Q-N3-001"}
         resolver = IdentityResolver(known_iso_keys=known)
 
@@ -98,9 +98,9 @@ class PipelineRegressionTests(unittest.TestCase):
             )
         )
 
-        self.assertEqual(result["Raw_3D_PipeCode"], "/TRIM-6FL216Q-N3")
-        self.assertEqual(result["ISO_Match_Key"], "TRIM-6FL216Q-N3")
-        self.assertIn("ISO 去末段後命中", result["IdentityReason"])
+        self.assertEqual(result["Raw_3D_PipeCode"], "")
+        self.assertEqual(result["ISO_Match_Key"], "")
+        self.assertEqual(result["CandidateCount"], 0)
 
     def test_pipeline_extractor_filters_to_iso_lines(self):
         with self._tmpdir() as d:
@@ -210,11 +210,22 @@ class PipelineRegressionTests(unittest.TestCase):
                 encoding="utf-8-sig",
             ).fillna("")
 
-            self.assertEqual(n, 2)
-            self.assertEqual(set(result["ISO_Match_Key"]), {"TRIM-6FL216Q-N3"})
-            self.assertTrue((trace["candidate_count"].astype(str) != "0").all())
-            self.assertTrue((trace["included_in_minus_1"].astype(str) == "1").all())
-            self.assertGreaterEqual(len(candidates), 2)
+            self.assertEqual(n, 0)
+            self.assertTrue(result.empty)
+            self.assertTrue((trace["candidate_count"].astype(str) == "0").all())
+            self.assertTrue((trace["included_in_minus_1"].astype(str) == "0").all())
+            self.assertTrue(
+                (trace["recall_candidate_count"].astype(int) > 0).all()
+            )
+            self.assertIn(
+                "TRIM-6FL216Q-N3-001",
+                set(candidates["iso_candidate"].astype(str)),
+            )
+            recall_rows = candidates[
+                candidates["candidate_kind"].astype(str).eq("iso_reverse_recall")
+            ]
+            self.assertGreaterEqual(len(recall_rows), 2)
+            self.assertLess(float(recall_rows.iloc[0]["score"]), 0.9)
 
     def test_resolved_mapping_blocks_collision_from_json(self):
         with self._tmpdir() as d:

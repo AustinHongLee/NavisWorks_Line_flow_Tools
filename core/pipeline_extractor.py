@@ -13,6 +13,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 import pandas as pd
 
 from core.identity_resolver import IdentityResolver
+from core.iso_recall_engine import IsoRecallEngine
 from core.scope_indexer import parse_scope_context
 from utils.iso_schema import detect_schema, load_iso_line_key_set
 from utils.utils_common import CommonUtils
@@ -328,6 +329,7 @@ class PipelineExtractor:
             raw_prefix=self.raw_prefix,
             known_iso_keys=known_iso_keys,
         )
+        recall_engine = IsoRecallEngine(known_iso_keys)
 
         def _attach_identity_columns(df_src: pd.DataFrame) -> pd.DataFrame:
             resolved = df_src.apply(
@@ -409,6 +411,13 @@ class PipelineExtractor:
                     detail = ""
                     if not included:
                         reason, detail = _classify_exclusion(raw_row, resolved_known)
+                    recall_candidates = []
+                    if not included:
+                        recall_candidates = recall_engine.recall_row(
+                            resolved_row if resolved_known else raw_row,
+                            max_candidates=3,
+                        )
+                    best_recall = recall_candidates[0] if recall_candidates else None
                     trace_rows.append(
                         {
                             "source_row_idx": source_idx,
@@ -437,6 +446,22 @@ class PipelineExtractor:
                             "exclude_reason": reason,
                             "exclude_detail": detail,
                             "minus_1_row_idx": minus_row_by_source.get(source_idx, ""),
+                            "recall_candidate_count": str(len(recall_candidates)),
+                            "best_recall_iso": best_recall.iso_key if best_recall else "",
+                            "best_recall_score": (
+                                f"{best_recall.score:.4f}" if best_recall else ""
+                            ),
+                            "best_recall_raw": best_recall.raw_3d if best_recall else "",
+                            "best_recall_normalized": (
+                                best_recall.normalized_3d if best_recall else ""
+                            ),
+                            "best_recall_terms": (
+                                ",".join(best_recall.matched_terms)
+                                if best_recall else ""
+                            ),
+                            "best_recall_reason": (
+                                best_recall.reason if best_recall else ""
+                            ),
                         }
                     )
                 pd.DataFrame(trace_rows).to_csv(
@@ -453,6 +478,7 @@ class PipelineExtractor:
                     for idx, cand in enumerate(candidates, start=1):
                         candidate_rows.append(
                             {
+                                "candidate_kind": "primary_identity",
                                 "source_row_idx": source_idx,
                                 "minus_1_row_idx": minus_row_by_source.get(source_idx, ""),
                                 "included_in_minus_1": (
@@ -465,6 +491,46 @@ class PipelineExtractor:
                                 "score": f"{cand.score:.4f}",
                                 "reason": cand.reason,
                                 "trace_events": " | ".join(cand.trace_events),
+                                "iso_candidate": "",
+                                "matched_terms": "",
+                                "missing_terms": "",
+                                "review_status": (
+                                    "auto_identity"
+                                    if source_idx in included_source
+                                    else "not_selected"
+                                ),
+                                "Path": scan_row.get("Path", ""),
+                                "DisplayName": scan_row.get("DisplayName", ""),
+                                "Level": scan_row.get("Level", ""),
+                                "PipelineId": scan_row.get("PipelineId", ""),
+                            }
+                        )
+                    recall_candidates = []
+                    if not candidates:
+                        recall_candidates = recall_engine.recall_row(
+                            scan_row,
+                            max_candidates=5,
+                        )
+                    for idx, cand in enumerate(recall_candidates, start=1):
+                        candidate_rows.append(
+                            {
+                                "candidate_kind": "iso_reverse_recall",
+                                "source_row_idx": source_idx,
+                                "minus_1_row_idx": minus_row_by_source.get(source_idx, ""),
+                                "included_in_minus_1": (
+                                    "1" if source_idx in included_source else "0"
+                                ),
+                                "candidate_idx": idx,
+                                "raw": cand.raw_3d,
+                                "normalized": cand.normalized_3d,
+                                "source": cand.source,
+                                "score": f"{cand.score:.4f}",
+                                "reason": cand.reason,
+                                "trace_events": cand.trace,
+                                "iso_candidate": cand.iso_key,
+                                "matched_terms": ",".join(cand.matched_terms),
+                                "missing_terms": ",".join(cand.missing_terms[:8]),
+                                "review_status": "needs_review",
                                 "Path": scan_row.get("Path", ""),
                                 "DisplayName": scan_row.get("DisplayName", ""),
                                 "Level": scan_row.get("Level", ""),
@@ -474,6 +540,7 @@ class PipelineExtractor:
                 pd.DataFrame(
                     candidate_rows,
                     columns=[
+                        "candidate_kind",
                         "source_row_idx",
                         "minus_1_row_idx",
                         "included_in_minus_1",
@@ -484,6 +551,10 @@ class PipelineExtractor:
                         "score",
                         "reason",
                         "trace_events",
+                        "iso_candidate",
+                        "matched_terms",
+                        "missing_terms",
+                        "review_status",
                         "Path",
                         "DisplayName",
                         "Level",

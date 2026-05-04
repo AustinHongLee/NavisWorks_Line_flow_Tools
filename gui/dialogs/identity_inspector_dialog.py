@@ -179,6 +179,7 @@ class IdentityInspectorWidget(QWidget):
         for key, title, value, accent in [
             ("iso_hit_count", "ISO 命中", "0", "#2563EB"),
             ("minus1_hit_count", "minus_1 線索", "0", "#059669"),
+            ("candidate_hit_count", "候選召回", "0", "#EA580C"),
             ("first_try_hit_count", "First_try 原始列", "0", "#7C3AED"),
             ("drop_last_3d_count", "去末段 3D 命中", "0", "#D97706"),
         ]:
@@ -211,6 +212,16 @@ class IdentityInspectorWidget(QWidget):
         ])
         splitter.addWidget(self._section("ISO / resolved_mapping", self.tbl_iso))
 
+        self.tbl_candidates = _make_table([
+            "類型",
+            "分數",
+            "ISO候選",
+            "3D Raw",
+            "命中詞",
+            "原因",
+        ])
+        splitter.addWidget(self._section("候選召回（candidates.csv）", self.tbl_candidates))
+
         self.tbl_minus = _make_table([
             "Level",
             "Raw_3D_PipeCode",
@@ -228,13 +239,15 @@ class IdentityInspectorWidget(QWidget):
             "Level",
             "進 minus_1",
             "排除原因",
+            "召回數",
+            "最佳召回",
             "DisplayName",
             "PipelineId",
             "最佳候選",
             "Path",
         ])
         splitter.addWidget(self._section("First_try / trace 原始命中列", self.tbl_first))
-        splitter.setSizes([150, 290, 260])
+        splitter.setSizes([130, 190, 260, 230])
         return splitter
 
     def _build_family_card(self) -> QWidget:
@@ -374,6 +387,10 @@ class IdentityInspectorWidget(QWidget):
         for key, lbl in self._metric_labels.items():
             lbl.setText(str(family.get(key, "0") or "0"))
         _fill_table(self.tbl_iso, self._compact_iso_rows(result.get("iso_rows", [])))
+        _fill_table(
+            self.tbl_candidates,
+            self._compact_candidate_rows(result.get("candidate_rows", [])),
+        )
         _fill_table(self.tbl_minus, self._compact_minus_rows(result.get("minus1_rows", [])))
         _fill_table(self.tbl_first, self._compact_first_rows(result.get("first_try_rows", [])))
         self._fill_level_cards(result.get("level_summary", []))
@@ -449,12 +466,28 @@ class IdentityInspectorWidget(QWidget):
         return [{**{key: row.get(key, "") for key in keys}, "_record": row} for row in rows]
 
     @staticmethod
+    def _compact_candidate_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+        return [
+            {
+                "類型": row.get("candidate_kind", ""),
+                "分數": row.get("score", ""),
+                "ISO候選": row.get("iso_candidate", ""),
+                "3D Raw": row.get("raw", ""),
+                "命中詞": row.get("matched_terms", ""),
+                "原因": row.get("reason", ""),
+            }
+            for row in rows
+        ]
+
+    @staticmethod
     def _compact_first_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
         return [
             {
                 "Level": row.get("Level", ""),
                 "進 minus_1": row.get("included_in_minus_1", ""),
                 "排除原因": row.get("exclude_reason", ""),
+                "召回數": row.get("recall_candidate_count", ""),
+                "最佳召回": row.get("best_recall_iso", ""),
                 "DisplayName": row.get("DisplayName", ""),
                 "PipelineId": row.get("PipelineId", ""),
                 "最佳候選": row.get("best_candidate_normalized", ""),
