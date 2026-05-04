@@ -491,6 +491,8 @@ class MainWindow(QMainWindow, PipelineTabMixin, JsonTabMixin, InvestigationTabMi
                 else:
                     self._log("模糊比對：使用者取消。")
 
+            self._maybe_prompt_collision_decisions()
+
             if self.chk_auto_cleanup.isChecked():
                 preserve_investigation = (
                     self.chk_first_try_trace.isChecked()
@@ -510,6 +512,42 @@ class MainWindow(QMainWindow, PipelineTabMixin, JsonTabMixin, InvestigationTabMi
                 f"color: {C_ERROR}; font-size: 12px;"
             )
             QMessageBox.critical(self, "執行失敗", summary)
+
+    def _maybe_prompt_collision_decisions(self):
+        try:
+            cfg = self._get_paths()
+            mapping_path = cfg["resolved_mapping_csv"]
+            if not os.path.exists(mapping_path):
+                return
+            from core.collision_resolver import load_collision_groups
+            groups = load_collision_groups(mapping_path)
+        except Exception as exc:
+            self._log(f"⚠ 讀取 collision 決策資料失敗：{exc}")
+            return
+
+        if not groups:
+            return
+
+        rows = sum(int(g.get("row_count", 0)) for g in groups)
+        self._log(
+            f"⚠ 發現 {len(groups)} 個流水號需要 collision 決策，"
+            f"共 {rows} 列候選。"
+        )
+        reply = QMessageBox.question(
+            self,
+            "需要 Collision 決策",
+            (
+                f"發現 {len(groups)} 個流水號有多個 3D 範圍候選。\n\n"
+                "要現在開啟決策視窗嗎？\n"
+                "也可以稍後到『JSON 匯出』頁按『處理衝突』。"
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        self._on_nav_clicked(2)
+        self._v2_auto_load_source()
+        if reply == QMessageBox.StandardButton.Yes:
+            self._v2_open_collision_decisions()
 
     # ════════════════════════════════════════
     #  Cleanup

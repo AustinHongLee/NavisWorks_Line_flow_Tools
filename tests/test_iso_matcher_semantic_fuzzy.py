@@ -286,7 +286,7 @@ class IsoMatcherSemanticFuzzyTests(unittest.TestCase):
             self.assertEqual(len(result), 2)
             self.assertEqual(set(result["NeedsDecision"].astype(str)), {"1"})
             self.assertTrue(
-                result["CollisionParents"].str.contains("ParentArea").all()
+                result["CollisionParents"].str.contains("ScopeRoot").all()
             )
 
             stats = build_resolved_mapping(str(out_path), str(mapping_path))

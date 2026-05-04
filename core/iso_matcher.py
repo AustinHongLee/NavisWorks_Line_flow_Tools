@@ -1453,15 +1453,15 @@ class IsoMatcher:
 
         def _collision_dimension(sub: pd.DataFrame) -> tuple[str, list[str]]:
             dimensions = [
-                ("ParentArea", _unique_nonempty(sub, "ParentArea")),
                 ("ScopeRoot", _unique_nonempty(sub, "ScopeRoot")),
+                ("ParentArea", _unique_nonempty(sub, "ParentArea")),
                 ("PipeNodeLevel", _unique_nonempty(sub, "PipeNodeLevel")),
                 ("Raw_3D_PipeCode", _unique_nonempty(sub, "Raw_3D_PipeCode")),
                 ("PipeNodePath", _unique_nonempty(sub, "PipeNodePath")),
             ]
-            multi = [(name, values) for name, values in dimensions if len(values) > 1]
-            if multi:
-                return max(multi, key=lambda item: len(item[1]))
+            for name, values in dimensions:
+                if len(values) > 1:
+                    return name, values
             for name, values in dimensions:
                 if values:
                     return name, values

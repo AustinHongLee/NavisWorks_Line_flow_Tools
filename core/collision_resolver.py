@@ -20,8 +20,8 @@ def _read_mapping(path: str) -> pd.DataFrame:
 
 
 CHOICE_COLUMNS = [
-    "ParentArea",
     "ScopeRoot",
+    "ParentArea",
     "PipeNodeLevel",
     "Raw_3D_PipeCode",
     "PipeNodePath",
@@ -43,13 +43,8 @@ def _collision_parent_dimension(df: pd.DataFrame) -> str:
 
 def _choice_col_for_sub(df: pd.DataFrame) -> str:
     """Choose the most useful dimension for a collision group."""
-    hinted = _collision_parent_dimension(df)
-    if hinted:
-        return hinted
-
     fallback = ""
-    best_col = ""
-    best_count = 0
+    hinted = _collision_parent_dimension(df)
     for col in CHOICE_COLUMNS:
         if col not in df.columns:
             continue
@@ -60,11 +55,10 @@ def _choice_col_for_sub(df: pd.DataFrame) -> str:
         }
         if values and not fallback:
             fallback = col
-        if len(values) > best_count:
-            best_col = col
-            best_count = len(values)
-    if best_count > 1:
-        return best_col
+        if len(values) > 1:
+            return col
+    if hinted and hinted in df.columns:
+        return hinted
     return fallback
 
 
