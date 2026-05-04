@@ -322,7 +322,7 @@ class PipelineExtractor:
         def _extract_row(row: pd.Series) -> str:
             """優先使用 PipelineId（C# 屬性值），為空則 fallback Path regex。
 
-            PipelineId 直接原值保留 → 確保 Raw_last 與 3D 身分證完全一致；
+            PipelineId 直接原值保留 → 確保 Raw_3D_PipeCode 與 3D 身分證完全一致；
             normalize_line 負責在比對時去除前綴。
             """
             pid = str(row.get("PipelineId", "")).strip()
@@ -338,20 +338,20 @@ class PipelineExtractor:
         if scan_mode == "full":
             # 嚴謹模式：全掃所有列，純靠 PipelineId / regex 辨識
             df = raw_df.copy()
-            df["Raw_last"] = df.apply(_extract_row, axis=1)
-            df["Line_combined"] = df["Raw_last"].astype(str).apply(
+            df["Raw_3D_PipeCode"] = df.apply(_extract_row, axis=1)
+            df["ISO_Match_Key"] = df["Raw_3D_PipeCode"].astype(str).apply(
                 CommonUtils.normalize_line
             )
-            # 嚴格過濾：Line_combined 必須符合 PIPE_SEG_PATTERN
+            # 嚴格過濾：ISO_Match_Key 必須符合 PIPE_SEG_PATTERN
             # （含數字 + 含連字號 + 純 ASCII）→ 才是真正管線編號
-            mask = df["Line_combined"].astype(str).apply(
+            mask = df["ISO_Match_Key"].astype(str).apply(
                 lambda v: bool(PIPE_SEG_PATTERN.match(v.strip()))
                 if v.strip() else False
             )
             df = df[mask].copy()
             out_cols = [
                 "Path", "DisplayName", "Class", "Level",
-                "Raw_last", "Line_combined",
+                "Raw_3D_PipeCode", "ISO_Match_Key",
             ]
             df[out_cols].to_csv(out_csv, index=False, encoding="utf-8-sig")
             return len(df)
@@ -363,14 +363,14 @@ class PipelineExtractor:
                 raw_df["Level"].astype(str).str.strip() == id_level_str
             ].copy()
 
-            df["Raw_last"] = df.apply(_extract_row, axis=1)
-            df["Line_combined"] = df["Raw_last"].astype(str).apply(
+            df["Raw_3D_PipeCode"] = df.apply(_extract_row, axis=1)
+            df["ISO_Match_Key"] = df["Raw_3D_PipeCode"].astype(str).apply(
                 CommonUtils.normalize_line
             )
 
             out_cols = [
                 "Path", "DisplayName", "Class", "Level",
-                "Raw_last", "Line_combined",
+                "Raw_3D_PipeCode", "ISO_Match_Key",
             ]
             df[out_cols].to_csv(out_csv, index=False, encoding="utf-8-sig")
             return len(df)
@@ -401,8 +401,8 @@ class PipelineExtractor:
 
         df = pd.DataFrame(result_records).fillna("")
 
-        df["Raw_last"] = df.apply(_extract_row, axis=1)
-        df["Line_combined"] = df["Raw_last"].astype(str).apply(
+        df["Raw_3D_PipeCode"] = df.apply(_extract_row, axis=1)
+        df["ISO_Match_Key"] = df["Raw_3D_PipeCode"].astype(str).apply(
             CommonUtils.normalize_line
         )
 

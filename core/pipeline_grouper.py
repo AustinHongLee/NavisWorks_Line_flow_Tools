@@ -53,7 +53,13 @@ class PipelineGrouper:
 
         df = df.fillna("")
 
-        if "Raw_last" not in df.columns:
+        # 向後相容：舊檔案可能使用舊欄位名稱
+        if "Raw_3D_PipeCode" not in df.columns and "Raw_last" in df.columns:
+            df = df.rename(columns={"Raw_last": "Raw_3D_PipeCode"})
+        if "ISO_Match_Key" not in df.columns and "Line_combined" in df.columns:
+            df = df.rename(columns={"Line_combined": "ISO_Match_Key"})
+
+        if "Raw_3D_PipeCode" not in df.columns:
             raw_col = CommonUtils.detect_raw_column(df)
             raw_series = df[raw_col].astype(str)
             if self.sep:
@@ -69,31 +75,40 @@ class PipelineGrouper:
                     return self.raw_prefix + core
                 return core
 
-            df["Raw_last"] = raw_last.apply(_apply_prefix)
+            df["Raw_3D_PipeCode"] = raw_last.apply(_apply_prefix)
 
-        df["__pipeline_seg"] = df.apply(
-            lambda r: PipelineKeyExtractor.guess_pipeline_segment(
-                [x for x in str(r.get("Path", "")).split(self.sep) if x]
+        # 若 Step1 已算好 ISO_Match_Key（且非全空），直接沿用不覆寫；
+        # 否則用 guess_pipeline_segment 推算（例如舊版本的中繼檔）
+        iso_already_valid = (
+            "ISO_Match_Key" in df.columns
+            and not df["ISO_Match_Key"].astype(str).str.strip().eq("").all()
+        )
+        if not iso_already_valid:
+            _pipeline_seg = df.apply(
+                lambda r: PipelineKeyExtractor.guess_pipeline_segment(
+                    [x for x in str(r.get("Path", "")).split(self.sep) if x]
+                )
+                or str(r.get("Raw_3D_PipeCode", "")).lstrip("/"),
+                axis=1,
             )
-            or str(r.get("Raw_last", "")).lstrip("/"),
-            axis=1,
-        )
-        df["Line_combined"] = df["__pipeline_seg"].astype(str).apply(
-            CommonUtils.normalize_line
-        )
+            df["ISO_Match_Key"] = _pipeline_seg.astype(str).apply(
+                CommonUtils.normalize_line
+            )
 
-        df["Raw_last"] = df["Raw_last"].astype(str).str.strip()
-        df["Line_combined"] = df["Line_combined"].astype(str).str.strip()
+        df["Raw_3D_PipeCode"] = df["Raw_3D_PipeCode"].astype(str).str.strip()
+        df["ISO_Match_Key"] = df["ISO_Match_Key"].astype(str).str.strip()
 
-        detail_df = df.copy()
+        # 寫出時去掉純內部暫存欄位（不寫入 CSV）
+        drop_cols = [c for c in df.columns if c.startswith("__")]
+        detail_df = df.drop(columns=drop_cols, errors="ignore")
         detail_df.to_csv(out_csv, index=False, encoding="utf-8-sig")
 
         group_df = (
-            detail_df.groupby("Line_combined", sort=False)
+            detail_df.groupby("ISO_Match_Key", sort=False)
             .agg(
-                筆數=("Raw_last", "size"),
+                筆數=("Raw_3D_PipeCode", "size"),
                 流水號群組=(
-                    "Raw_last",
+                    "Raw_3D_PipeCode",
                     lambda s: "_".join(CommonUtils.unique_preserve(s)),
                 ),
             )

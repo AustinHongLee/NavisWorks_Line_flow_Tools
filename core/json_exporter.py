@@ -63,10 +63,14 @@ class JsonExporter:
         df = df.rename(columns={c: str(c).strip() for c in df.columns})
         self._log_print(f"[Step4_v2] iso_match 欄位 = {list(df.columns)}")
 
-        if "Raw_last" not in df.columns:
-            self._log_print("[Step4_v2][ERROR] iso_match 缺少 Raw_last 欄位")
-            raise ValueError("iso 比對結果缺少必要欄位『Raw_last』")
-        df["Raw_last"] = df["Raw_last"].astype(str).str.strip()
+        # 向後相容：舊檔案可能使用舊欄位名稱
+        if "Raw_3D_PipeCode" not in df.columns and "Raw_last" in df.columns:
+            df = df.rename(columns={"Raw_last": "Raw_3D_PipeCode"})
+
+        if "Raw_3D_PipeCode" not in df.columns:
+            self._log_print("[Step4_v2][ERROR] iso_match 缺少 Raw_3D_PipeCode 欄位")
+            raise ValueError("改比對結果缺少必要欄位『Raw_3D_PipeCode』")
+        df["Raw_3D_PipeCode"] = df["Raw_3D_PipeCode"].astype(str).str.strip()
 
         if out_dir is None or not str(out_dir).strip():
             out_dir = (
@@ -80,19 +84,27 @@ class JsonExporter:
             entries: List[dict] = []
             if group_key not in df_src.columns:
                 return entries
-            sub_df = df_src[(df_src["Raw_last"] != "")]
+            sub_df = df_src[(df_src["Raw_3D_PipeCode"] != "")]
             for key, sub in sub_df.groupby(group_key, sort=False):
                 key_v = str(key).strip()
                 if not key_v:
                     continue
-                raws = CommonUtils.unique_preserve(sub["Raw_last"].tolist())
+                raws = CommonUtils.unique_preserve(sub["Raw_3D_PipeCode"].tolist())
                 if not raws:
                     continue
-                entries.append({"群組": key_v, "管線號": raws})
+                entries.append({group_key: key_v, "管線號": raws})
             return entries
 
-        def _sort_group_entries(entries: List[dict]) -> List[dict]:
-            """依『群組』欄位排序：
+        def _build_flat_list(df_src: pd.DataFrame) -> List[dict]:
+            """不分組，純列出每筆 Raw_3D_PipeCode。"""
+            sub_df = df_src[(df_src["Raw_3D_PipeCode"] != "")]
+            raws = CommonUtils.unique_preserve(sub_df["Raw_3D_PipeCode"].tolist())
+            if not raws:
+                return []
+            return [{"管線號": r} for r in raws]
+
+        def _sort_group_entries(entries: List[dict], key_name: str = "群組") -> List[dict]:
+            """依分組欄位排序：
 
             規則：
             - 純數字，例如 "30" → 視為主軸 30、無副軸
@@ -139,7 +151,7 @@ class JsonExporter:
                 return tuple(key)
 
             def _key(e: dict):
-                g = str(e.get("群組", "")).strip()
+                g = str(e.get(key_name, "")).strip()
                 parsed = _parse_numeric_group(g)
                 if parsed is not None:
                     main, sub = parsed
@@ -215,32 +227,42 @@ class JsonExporter:
                     f"[Step4_v2] 使用指定 group_key = '{group_key}'"
                 )
 
-            if group_key == "__ALL__":
+            if group_key == "__FLAT__":
+                self._log_print(
+                    "[Step4_v2] group_key='__FLAT__'，不分組，純列出管線號。"
+                )
+                merged_entries = _build_flat_list(sub)
+                if not merged_entries:
+                    self._log_print(
+                        "[Step4_v2] 不分組模式下沒有任何 Raw_3D_PipeCode。"
+                    )
+                    continue
+            elif group_key == "__ALL__":
                 self._log_print(
                     "[Step4_v2] group_key='__ALL__'，全部視為一組 ALL。"
                 )
                 raws_all = CommonUtils.unique_preserve(
-                    sub["Raw_last"].tolist()
+                    sub["Raw_3D_PipeCode"].tolist()
                 )
                 if not raws_all:
                     self._log_print(
-                        "[Step4_v2] ALL 群組下沒有任何 Raw_last，有點異常。"
+                        "[Step4_v2] ALL 群組下沒有任何 Raw_3D_PipeCode，有點異常。"
                     )
                     continue
-                merged_entries = [{"群組": "ALL", "管線號": raws_all}]
+                merged_entries = [{group_key: "ALL", "管線號": raws_all}]
             else:
                 self._log_print(
-                    f"[Step4_v2] 依 group_key='{group_key}' 分組 Raw_last。"
+                    f"[Step4_v2] 依 group_key='{group_key}' 分組 Raw_3D_PipeCode。"
                 )
                 merged_entries = _build_basic_groups(sub, group_key)
                 if not merged_entries:
                     self._log_print(
-                        "[Step4_v2] 分組後沒有任何有效群組（可能 key 都是空或無 Raw_last）。"
+                        "[Step4_v2] 分組後沒有任何有效群組（可能 key 都是空或無 Raw_3D_PipeCode）。"
                     )
                     continue
 
                 # 依群組排序：數字群組優先且按數值大小，其餘為一般字串
-                merged_entries = _sort_group_entries(merged_entries)
+                merged_entries = _sort_group_entries(merged_entries, key_name=group_key)
 
             safe_name = CommonUtils.sanitize_filename(name)
             out_path = os.path.join(out_dir, f"{safe_name}.json")

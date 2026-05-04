@@ -18,7 +18,7 @@ class CommonUtils:
     @staticmethod
     def detect_raw_column(df: pd.DataFrame) -> str:
         """嘗試猜「原始字串欄位」的欄名。"""
-        candidates = ["Raw_last", "Raw last", "raw_last", "RAW_LAST"]
+        candidates = ["Raw_3D_PipeCode", "Raw_last", "Raw last", "raw_last", "RAW_LAST"]
         for c in candidates:
             if c in df.columns:
                 return c
@@ -91,6 +91,9 @@ STRUCTURAL_KEYWORDS = {
     "FRAME",
 }
 
+# 含副檔名（如 .nwd / .rvm / .rvt）的段不應被當成管線段
+_FILE_EXT_RE = re.compile(r'\.[a-zA-Z]{2,4}$')
+
 
 class PipelineKeyExtractor:
     """管線段擷取與標準化相關工具。"""
@@ -104,6 +107,9 @@ class PipelineKeyExtractor:
                 continue
             upper = s.upper()
             if any(k in upper for k in STRUCTURAL_KEYWORDS):
+                continue
+            # 含副檔名的段（如 HP6-20260127.nwd）不是管線段
+            if _FILE_EXT_RE.search(s):
                 continue
             if PIPE_SEG_PATTERN.match(s):
                 candidates.append((len(s), idx, s))

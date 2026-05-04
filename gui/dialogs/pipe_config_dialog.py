@@ -70,7 +70,7 @@ class PipeCodeConfigDialog(QDialog):
 
         note = QLabel(
             "說明：此處只負責『整串管線編號』的拆解設定，"
-            "實際取得管線編號（如從 Raw_last 截取）仍由程式負責。\n"
+            "實際取得管線編號（如從 Raw_3D_PipeCode 截取）仍由程式負責。\n"
             "常見範例：A-10-DN25-CS → system=A, line_no=10, size=DN25, class=CS。"
         )
         note.setStyleSheet(f"color: {C_NOTE}; font-size: 11px;")

@@ -422,6 +422,32 @@ class JsonTabMixin:
         sep_line.setStyleSheet("background: #E2E8F0;")
         ctrl_lay.addWidget(sep_line)
 
+        # ── 分組依據 ──
+        gk_row = QHBoxLayout()
+        gk_row.setSpacing(6)
+        lbl_gk = QLabel("分組依據")
+        lbl_gk.setStyleSheet(
+            "font-size: 12px; font-weight: 600; color: #475569;"
+        )
+        lbl_gk.setFixedWidth(56)
+        gk_row.addWidget(lbl_gk)
+        self._v2_cbo_group_key = QComboBox()
+        self._v2_cbo_group_key.setFixedWidth(150)
+        self._v2_cbo_group_key.setToolTip(
+            "JSON 輸出時依此欄位分組\n"
+            "預設「群組」，可改為尺寸、系統等\n"
+            "選「— 不分組（平面清單）」則純列出 Raw_3D_PipeCode"
+        )
+        self._v2_cbo_group_key.currentIndexChanged.connect(
+            lambda: (
+                self._refresh_preview_table(),
+                self._v2_update_live_count(),
+            )
+        )
+        gk_row.addWidget(self._v2_cbo_group_key)
+        gk_row.addStretch()
+        ctrl_lay.addLayout(gk_row)
+
         # ── 檔名 ──
         fn_row = QHBoxLayout()
         fn_row.setSpacing(6)
@@ -436,10 +462,6 @@ class JsonTabMixin:
         fn_row.addWidget(self.v2_txt_filename)
         fn_row.addStretch()
         ctrl_lay.addLayout(fn_row)
-
-        # 向後相容：隱藏的 _v2_cbo_group_key
-        self._v2_cbo_group_key = QComboBox()
-        self._v2_cbo_group_key.setVisible(False)
 
         # ── 右側：操作說明 ──
         help_browser = QTextBrowser()
@@ -481,10 +503,10 @@ class JsonTabMixin:
             "<p style='margin:0 0 4px;'>"
             "<b>③ 表格預覽</b><br>"
             "┌──────┬──────┬─────┬──────────┐<br>"
-            "│ 流水號 │ 群組 │ 篩選欄 │ Raw_last &nbsp;│<br>"
+            "│ 流水號 │ 群組 │ 篩選欄 │ Raw_3D_PipeCode │<br>"
             "└──────┴──────┴─────┴──────────┘<br>"
             "&nbsp;&nbsp;固定顯示：流水號、群組 → "
-            "中間放篩選欄 → 最右是 Raw_last</p>"
+            "中間放篩選欄 → 最右是 Raw_3D_PipeCode</p>"
             #
             "<p style='margin:0 0 4px;'>"
             "<b>④ 匯出 JSON</b><br>"
@@ -691,8 +713,8 @@ class JsonTabMixin:
         row_count = len(df)
         col_count = len(cols)
         raw_info = ""
-        if "Raw_last" in df.columns:
-            raw_n = df["Raw_last"].nunique()
+        if "Raw_3D_PipeCode" in df.columns:
+            raw_n = df["Raw_3D_PipeCode"].nunique()
             raw_info = f"  |  {raw_n} 筆管線"
         self._v2_lbl_source.setText(
             f"📄 {fname}    {row_count} 列 × {col_count} 欄{raw_info}"
@@ -718,6 +740,16 @@ class JsonTabMixin:
         if not cat_cols:
             cat_cols = cols[:8]
         self._v2_cat_cols = cat_cols
+
+        # 填充分組依據下拉
+        self._v2_cbo_group_key.blockSignals(True)
+        self._v2_cbo_group_key.clear()
+        self._v2_cbo_group_key.addItem("— 不分組（平面清單）")
+        self._v2_cbo_group_key.addItems(cat_cols)
+        # 預設選「群組」
+        if "群組" in cat_cols:
+            self._v2_cbo_group_key.setCurrentText("群組")
+        self._v2_cbo_group_key.blockSignals(False)
 
         # 填充篩選列下拉選單
         for info in self._v2_filter_row_widgets:
@@ -842,14 +874,21 @@ class JsonTabMixin:
             self._v2_update_live_count()
             self._v2_update_filename()
 
-    # 固定顯示欄位（依序排列在最前面 + Raw_last 在最後）
-    _PINNED_HEAD = ["流水號", "群組"]
-    _PINNED_TAIL = ["Raw_last"]
+    # 固定顯示欄位（Raw_3D_PipeCode 在最後）
+    _PINNED_TAIL = ["Raw_3D_PipeCode"]
+
+    def _get_pinned_head(self) -> list[str]:
+        """動態產生表格前端固定欄：流水號 + 分組依據選的欄位。"""
+        head = ["流水號"]
+        gk = self._v2_cbo_group_key.currentText().strip()
+        if not gk.startswith("—") and gk:
+            head.append(gk)
+        return head
 
     def _get_display_columns(self) -> list[str]:
-        """取得目前表格要顯示的欄位：固定欄 + 篩選欄 + Raw_last。
+        """取得目前表格要顯示的欄位：固定欄 + 篩選欄 + Raw_3D_PipeCode。
 
-        排列順序：流水號, 群組, [篩選欄位…], Raw_last
+        排列順序：流水號, [分組欄位], [篩選欄位…], Raw_3D_PipeCode
         （若尚未選任何篩選，則顯示全部欄位。）
         """
         avail = getattr(self, "_v2_available_cols", [])
@@ -866,10 +905,10 @@ class JsonTabMixin:
         if not filter_cols:
             return avail  # 無篩選 → 顯示全部
 
-        # 組合：固定頭 + 篩選欄（去重）+ 固定尾
+        # 組合：動態頭 + 篩選欄（去重）+ 固定尾
         seen: set[str] = set()
         cols: list[str] = []
-        for c in self._PINNED_HEAD:
+        for c in self._get_pinned_head():
             if c in avail and c not in seen:
                 cols.append(c)
                 seen.add(c)
@@ -969,8 +1008,8 @@ class JsonTabMixin:
             )
         else:
             raw_info = ""
-            if sub is not None and "Raw_last" in sub.columns:
-                raw_n = sub["Raw_last"].nunique()
+            if sub is not None and "Raw_3D_PipeCode" in sub.columns:
+                raw_n = sub["Raw_3D_PipeCode"].nunique()
                 raw_info = f"（{raw_n} 筆管線）"
             self._v2_lbl_count.setText(
                 f"✓ {filtered} / {total} 列{raw_info}"
@@ -1037,11 +1076,12 @@ class JsonTabMixin:
         name = self.v2_txt_filename.text().strip() or "live_selection"
         filters = dict(self._v2_live_filters)
 
-        # group_key = 母篩選（篩選 1）選的欄位，若未選則預設「群組」
-        group_key = (
-            self._v2_filter_row_widgets[0].get("active_col")
-            or "群組"
-        )
+        # group_key 從「分組依據」下拉取得
+        gk_text = self._v2_cbo_group_key.currentText().strip()
+        if gk_text.startswith("—") or not gk_text:
+            group_key = "__FLAT__"  # 不分組
+        else:
+            group_key = gk_text
 
         from utils.utils_common import FileLogger
 

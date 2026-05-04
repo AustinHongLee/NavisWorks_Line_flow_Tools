@@ -182,10 +182,10 @@ class IsoMatcher:
         spool_col_override: Optional[str] = None,
         output_path: Optional[str] = None,
     ) -> str:
-        """檢查 ISO LIST 每一列管線是否能在 minus_2 的 Line_combined 中找到家。
+        """檢查 ISO LIST 每一列管線是否能在 minus_2 的 ISO_Match_Key 中找到家。
 
         - 讀取 123_minus_2.csv（若不存在則退回 123_minus_1.csv）。
-        - 對 minus 的 Line_combined 與 ISO 的管線欄位都套用 CommonUtils.normalize_line。
+        - 對 minus 的 ISO_Match_Key 與 ISO 的管線欄位都套用 CommonUtils.normalize_line。
         - 產出一份 coverage 報表，其中列出：
           - 每列 ISO 的原始管線編號、流水號、標準化 key
           - 是否在 minus 端找到對應 (Matched: 1/0)
@@ -210,14 +210,21 @@ class IsoMatcher:
             minus_csv_path, dtype=str, encoding="utf-8-sig"
         ).fillna("")
 
-        if "Line_combined" not in df_minus.columns and "Line combined" in df_minus.columns:
-            df_minus = df_minus.rename(columns={"Line combined": "Line_combined"})
-        if "Line_combined" not in df_minus.columns:
+        # 向後相容：處理舊檔案欄位名稱
+        if "ISO_Match_Key" not in df_minus.columns:
+            rename_map = {}
+            if "Line_combined" in df_minus.columns:
+                rename_map["Line_combined"] = "ISO_Match_Key"
+            elif "Line combined" in df_minus.columns:
+                rename_map["Line combined"] = "ISO_Match_Key"
+            if rename_map:
+                df_minus = df_minus.rename(columns=rename_map)
+        if "ISO_Match_Key" not in df_minus.columns:
             raise ValueError(
-                "[Coverage] minus 檔缺少欄位『Line_combined』，請確認先執行 Step1/Step2。"
+                "[Coverage] minus 檔缺少欄位『ISO_Match_Key』，請確認先執行 Step1/Step2。"
             )
 
-        df_minus["__line_norm"] = df_minus["Line_combined"].astype(str).apply(
+        df_minus["__line_norm"] = df_minus["ISO_Match_Key"].astype(str).apply(
             CommonUtils.normalize_line
         )
         minus_set = set(df_minus["__line_norm"].tolist())
@@ -302,10 +309,10 @@ class IsoMatcher:
         pipe_col_override: Optional[str] = None,
         loose_join_roles: Optional[List[str]] = None,
     ) -> str:
-        """檢查 minus_2 的每一條 Line_combined 是否至少有一列 ISO 管線編號對應。
+        """檢查 minus_2 的每一條 ISO_Match_Key 是否至少有一列 ISO 管線編號對應。
 
         這是從 3D 身分證的角度看 ISO 覆蓋率：
-        - minus_2 端：使用 Line_combined → normalize 後成 minus_line_norm。
+        - minus_2 端：使用 ISO_Match_Key → normalize 後成 minus_line_norm。
         - ISO 端：使用管線欄位 → normalize 成 iso_line_norm。
         - 若某條 minus_line_norm 不在任何 iso_line_norm 之中，則視為「3D 有、ISO 沒有」。
         """
@@ -328,15 +335,22 @@ class IsoMatcher:
             minus_csv_path, dtype=str, encoding="utf-8-sig"
         ).fillna("")
 
-        if "Line_combined" not in df_minus.columns and "Line combined" in df_minus.columns:
-            df_minus = df_minus.rename(columns={"Line combined": "Line_combined"})
-        if "Line_combined" not in df_minus.columns:
+        # 向後相容：處理舊檔案欄位名稱
+        if "ISO_Match_Key" not in df_minus.columns:
+            rename_map = {}
+            if "Line_combined" in df_minus.columns:
+                rename_map["Line_combined"] = "ISO_Match_Key"
+            elif "Line combined" in df_minus.columns:
+                rename_map["Line combined"] = "ISO_Match_Key"
+            if rename_map:
+                df_minus = df_minus.rename(columns=rename_map)
+        if "ISO_Match_Key" not in df_minus.columns:
             raise ValueError(
-                "[MinusCoverage] minus 檔缺少欄位『Line_combined』，請確認先執行 Step1/Step2。"
+                "[MinusCoverage] minus 檔缺少欄位『ISO_Match_Key』，請確認先執行 Step1/Step2。"
             )
 
-        df_minus["Line_combined"] = df_minus["Line_combined"].astype(str).str.strip()
-        df_minus["line_norm"] = df_minus["Line_combined"].apply(CommonUtils.normalize_line)
+        df_minus["ISO_Match_Key"] = df_minus["ISO_Match_Key"].astype(str).str.strip()
+        df_minus["line_norm"] = df_minus["ISO_Match_Key"].apply(CommonUtils.normalize_line)
 
         if iso_list_path:
             iso_path = iso_list_path
@@ -381,7 +395,7 @@ class IsoMatcher:
         iso_set = set(iso_df["line_norm"].tolist())
 
         # 嚴謹比對：完整標準化字串 1:1 覆蓋
-        minus_cov = df_minus[["Line_combined", "line_norm"]].drop_duplicates().copy()
+        minus_cov = df_minus[["ISO_Match_Key", "line_norm"]].drop_duplicates().copy()
         minus_cov["Matched_strict"] = minus_cov["line_norm"].apply(
             lambda k: 1 if k and k in iso_set else 0
         )
@@ -444,7 +458,7 @@ class IsoMatcher:
             minus_cov.to_excel(writer, index=False, sheet_name="coverage")
 
         _log(
-            f"[MinusCoverage] 已輸出 minus_2 覆蓋檢查報表，共 {len(minus_cov)} 條 Line_combined，"
+            f"[MinusCoverage] 已輸出 minus_2 覆蓋檢查報表，共 {len(minus_cov)} 條 ISO_Match_Key，"
             f"嚴謹比對 {int(minus_cov['Matched_strict'].sum())} 條，寬鬆比對 {int(minus_cov['Matched_loose'].sum())} 條有對應 ISO 管線。"
         )
         return output_path
@@ -522,22 +536,32 @@ class IsoMatcher:
                 f"{minus_csv_path}，請檢查檔案是否被鎖定或格式是否正確。詳細：{e}"
             ) from e
 
-        if "Line_combined" not in df_minus.columns and "Line combined" in df_minus.columns:
-            df_minus = df_minus.rename(columns={"Line combined": "Line_combined"})
+        # 向後相容：處理舊檔案欄位名稱
+        if "ISO_Match_Key" not in df_minus.columns:
+            rename_map = {}
+            if "Line_combined" in df_minus.columns:
+                rename_map["Line_combined"] = "ISO_Match_Key"
+            elif "Line combined" in df_minus.columns:
+                rename_map["Line combined"] = "ISO_Match_Key"
+            if rename_map:
+                df_minus = df_minus.rename(columns=rename_map)
 
-        if "Line_combined" not in df_minus.columns:
+        if "ISO_Match_Key" not in df_minus.columns:
             raise ValueError(
-                "[Step3] 123_minus_2.csv / 123_minus_1.csv 缺少欄位『Line_combined』，"
+                "[Step3] 123_minus_2.csv / 123_minus_1.csv 缺少欄位『ISO_Match_Key』，"
                 "請確認是否有先執行 Step1/Step2 並使用新版程式產生。"
             )
 
-        if "Raw_last" not in df_minus.columns:
-            df_minus["Raw_last"] = ""
-        df_minus["Raw_last"] = df_minus["Raw_last"].astype(str).str.strip()
-        df_minus["Line_combined"] = (
-            df_minus["Line_combined"].astype(str).str.strip()
+        if "Raw_3D_PipeCode" not in df_minus.columns:
+            if "Raw_last" in df_minus.columns:
+                df_minus = df_minus.rename(columns={"Raw_last": "Raw_3D_PipeCode"})
+            else:
+                df_minus["Raw_3D_PipeCode"] = ""
+        df_minus["Raw_3D_PipeCode"] = df_minus["Raw_3D_PipeCode"].astype(str).str.strip()
+        df_minus["ISO_Match_Key"] = (
+            df_minus["ISO_Match_Key"].astype(str).str.strip()
         )
-        df_minus["__line_norm"] = df_minus["Line_combined"].apply(
+        df_minus["__line_norm"] = df_minus["ISO_Match_Key"].apply(
             CommonUtils.normalize_line
         )
 
@@ -545,8 +569,8 @@ class IsoMatcher:
         _log(f"df_minus rows = {len(df_minus)}")
         _log(f"df_minus columns = {list(df_minus.columns)}")
         _log(
-            "Line_combined sample (前 5 筆標準化前): "
-            + ", ".join(df_minus["Line_combined"].head(5).tolist())
+            "ISO_Match_Key sample (前 5 筆標準化前): "
+            + ", ".join(df_minus["ISO_Match_Key"].head(5).tolist())
         )
         _log(
             "line_norm sample (前 5 筆): "
@@ -677,7 +701,7 @@ class IsoMatcher:
         # ── Phase 1: 嚴謹比對 ──
         if len(iso_keep) > 0:
             minus_map = df_minus[
-                ["__line_norm", "Line_combined", "Raw_last"]
+                ["__line_norm", "ISO_Match_Key", "Raw_3D_PipeCode"]
             ].drop_duplicates()
             merged = iso_keep.merge(minus_map, on="__line_norm", how="left")
             merged["MatchType"] = "strict"
@@ -686,7 +710,7 @@ class IsoMatcher:
 
         # ── Phase 2: 去尺寸段比對 ──
         # 3D 常為 5 段 (系統-編號-尺寸-材質-保溫)，ISO 為 4 段 (無尺寸)
-        # 將 3D 的 Line_combined 去掉尺寸段後比對
+        # 將 3D 的 ISO_Match_Key 去掉尺寸段後比對
         if merged is None or len(merged) < len(iso_df):
             _log("Phase2: 嘗試去尺寸段比對 (strip-size)...")
             df_minus["__line_stripped"] = df_minus["__line_norm"].apply(
@@ -708,7 +732,7 @@ class IsoMatcher:
 
             if len(iso_strip_keep) > 0:
                 minus_strip_map = df_minus[
-                    ["__line_stripped", "Line_combined", "Raw_last"]
+                    ["__line_stripped", "ISO_Match_Key", "Raw_3D_PipeCode"]
                 ].drop_duplicates()
                 strip_merged = iso_strip_keep.merge(
                     minus_strip_map,
@@ -741,7 +765,7 @@ class IsoMatcher:
 
             if len(iso_drop_keep) > 0:
                 minus_drop_map = df_minus[
-                    ["__line_drop_last", "Line_combined", "Raw_last"]
+                    ["__line_drop_last", "ISO_Match_Key", "Raw_3D_PipeCode"]
                 ].drop_duplicates()
                 drop_merged = iso_drop_keep.merge(
                     minus_drop_map,
@@ -768,7 +792,7 @@ class IsoMatcher:
             _log(f"Phase3 fallback base match rows = {len(iso_keep_base)}")
             if len(iso_keep_base) > 0:
                 minus_map_base = df_minus[
-                    ["__line_base", "Line_combined", "Raw_last"]
+                    ["__line_base", "ISO_Match_Key", "Raw_3D_PipeCode"]
                 ].drop_duplicates()
                 fb_merged = iso_keep_base.merge(
                     minus_map_base,
@@ -786,7 +810,7 @@ class IsoMatcher:
         # ── 確保 merged 存在 ──
         if merged is None:
             minus_map = df_minus[
-                ["__line_norm", "Line_combined", "Raw_last"]
+                ["__line_norm", "ISO_Match_Key", "Raw_3D_PipeCode"]
             ].drop_duplicates()
             merged = iso_keep.merge(minus_map, on="__line_norm", how="left")
             if "MatchType" not in merged.columns:
@@ -812,6 +836,14 @@ class IsoMatcher:
                 prefix_to_3d.setdefault(pfx, []).append(v)
             if len(parts) >= 1 and parts[0]:
                 system_to_3d.setdefault(parts[0].upper(), []).append(v)
+
+        # __line_norm → Raw_3D_PipeCode 對照（保留原始 / 前綴，供 apply_fuzzy_selections 還原）
+        norm_to_raw: Dict[str, str] = {}
+        for _, _mrow in df_minus[["__line_norm", "Raw_3D_PipeCode"]].drop_duplicates().iterrows():
+            _n = str(_mrow["__line_norm"]).strip()
+            _r = str(_mrow["Raw_3D_PipeCode"]).strip()
+            if _n and _r and _n not in norm_to_raw:
+                norm_to_raw[_n] = _r
 
         self.fuzzy_unmatched = []
         for _, row in iso_still_unmatched.iterrows():
@@ -839,6 +871,7 @@ class IsoMatcher:
                     score, reason = _compute_segment_score(iso_line, cand_3d)
                 candidates.append({
                     "line_3d": cand_3d,
+                    "raw_3d": norm_to_raw.get(cand_3d, cand_3d),
                     "score": score,
                     "reason": reason,
                 })
@@ -853,6 +886,7 @@ class IsoMatcher:
                     if score >= 0.20:
                         candidates.append({
                             "line_3d": cand_3d,
+                            "raw_3d": norm_to_raw.get(cand_3d, cand_3d),
                             "score": score,
                             "reason": reason,
                         })
@@ -866,6 +900,7 @@ class IsoMatcher:
                     if score >= 0.40:
                         candidates.append({
                             "line_3d": v,
+                            "raw_3d": norm_to_raw.get(str(v), str(v)),
                             "score": score,
                             "reason": reason,
                         })
@@ -931,11 +966,11 @@ class IsoMatcher:
             df_minus["__loose_key"] = df_minus["__line_norm"].apply(_build_loose_key_from_norm)
 
             # 嚴謹已匹配到 ISO 的 minus key
-            strict_minus_keys = set(merged["Line_combined"].astype(str).tolist())
+            strict_minus_keys = set(merged["ISO_Match_Key"].astype(str).tolist())
 
-            # 找出：尚未嚴謹 match，但在寬鬆 key 上有家族的 minus 列
+            # 找出：尚未嚴謹 match，但在对鬆 key 上有家族的 minus 列
             minus_loose_only = df_minus[
-                (~df_minus["Line_combined"].astype(str).isin(strict_minus_keys))
+                (~df_minus["ISO_Match_Key"].astype(str).isin(strict_minus_keys))
                 & df_minus["__loose_key"].astype(str).isin(
                     {k for k in iso_df["__loose_key"].astype(str).tolist() if k}
                 )
@@ -946,10 +981,10 @@ class IsoMatcher:
                     f"發現 {len(minus_loose_only)} 條 3D 線為『僅寬鬆有家族』，將補入 iso_match。"
                 )
                 _log(
-                    "minus_loose_only sample (前 3 筆 Line_combined, __loose_key): "
+                    "minus_loose_only sample (前 3 筆 ISO_Match_Key, __loose_key): "
                     + ", ".join(
                         [
-                            f"{r['Line_combined']}|{r['__loose_key']}"
+                            f"{r['ISO_Match_Key']}|{r['__loose_key']}"
                             for _, r in minus_loose_only.head(3).iterrows()
                         ]
                     )
@@ -968,8 +1003,8 @@ class IsoMatcher:
                     for c in merged.columns
                     if c
                     not in [
-                        "Line_combined",
-                        "Raw_last",
+                        "ISO_Match_Key",
+                        "Raw_3D_PipeCode",
                         "群組",
                         "MatchType",
                     ]
@@ -986,7 +1021,7 @@ class IsoMatcher:
 
                 # 準備補充列：
                 # - 以代表 ISO 列的 header 為模板（來自 iso_cols_for_loose）
-                # - 覆寫 3D 端的 Line_combined / Raw_last
+                # - 覆寫 3D 端的 ISO_Match_Key / Raw_3D_PipeCode
                 # - 群組後面會統一重算
                 add_rows = []
                 for _, r in minus_loose_only.iterrows():
@@ -998,8 +1033,8 @@ class IsoMatcher:
                     # 3D 相關欄位覆寫
                     row["管線編號"] = r.get("__pipe_raw", "")
                     row["流水號"] = r.get("流水號", "")
-                    row["Line_combined"] = r.get("Line_combined", "")
-                    row["Raw_last"] = r.get("Raw_last", "")
+                    row["ISO_Match_Key"] = r.get("ISO_Match_Key", "")
+                    row["Raw_3D_PipeCode"] = r.get("Raw_3D_PipeCode", "")
 
                     # 群組稍後由 group_map 重算，這裡先給空
                     row["群組"] = ""
@@ -1013,10 +1048,10 @@ class IsoMatcher:
                         f"準備補入 {len(add_df)} 筆 loose_only 至 merged，補入前 merged.columns = {list(merged.columns)}"
                     )
                     _log(
-                        "loose_only add_df sample (前 3 筆 管線編號, 流水號, Line_combined, MatchType): "
+                        "loose_only add_df sample (前 3 筆 管線編號, 流水號, ISO_Match_Key, MatchType): "
                         + ", ".join(
                             [
-                                f"{r['管線編號']}|{r['流水號']}|{r['Line_combined']}|{r['MatchType']}"
+                                f"{r['管線編號']}|{r['流水號']}|{r['ISO_Match_Key']}|{r['MatchType']}"
                                 for _, r in add_df.head(3).iterrows()
                             ]
                         )
@@ -1029,10 +1064,10 @@ class IsoMatcher:
             _log(f"[Step3] 補充寬鬆家族 3D 線到 iso_match 時發生錯誤（略過）：{e}")
 
         _log(f"merged rows = {len(merged)} (key={used_key_type})")
-        _log("merged sample (前 5 筆 管線編號, 流水號, Line_combined):")
+        _log("merged sample (前 5 筆 管線編號, 流水號, ISO_Match_Key):")
         for _, r in merged.head(5).iterrows():
             pipe_show = r.get("__pipe_raw", r.get("__pipe_base", ""))
-            _log(f"  {pipe_show} | {r['流水號']} | {r['Line_combined']}")
+            _log(f"  {pipe_show} | {r['流水號']} | {r['ISO_Match_Key']}")
 
         extra_cols = ["系統", "材質", "保溫", "試壓媒介", "預製圖", "發包分類"]
         for c in extra_cols:
@@ -1058,8 +1093,8 @@ class IsoMatcher:
         full_out_cols = [
             "管線編號",
             "流水號",
-            "Line_combined",
-            "Raw_last",
+            "ISO_Match_Key",
+            "Raw_3D_PipeCode",
             "系統",
             "材質",
             "保溫",
@@ -1081,8 +1116,8 @@ class IsoMatcher:
             base_cols = [
                 "管線編號",
                 "流水號",
-                "Line_combined",
-                "Raw_last",
+                "ISO_Match_Key",
+                "Raw_3D_PipeCode",
                 "群組",
             ]
             headers = extra_iso_headers or []
@@ -1106,10 +1141,10 @@ class IsoMatcher:
             mt_values = []
         _log("result MatchType unique = " + ", ".join(mt_values))
         _log(
-            "result head sample (前 3 筆 管線編號, 流水號, Line_combined, MatchType): "
+            "result head sample (前 3 筆 管線編號, 流水號, ISO_Match_Key, MatchType): "
             + ", ".join(
                 [
-                    f"{r.get('管線編號','')}|{r.get('流水號','')}|{r.get('Line_combined','')}|{r.get('MatchType','')}"  # type: ignore[index]
+                    f"{r.get('管線編號','')}|{r.get('流水號','')}|{r.get('ISO_Match_Key','')}|{r.get('MatchType','')}"  # type: ignore[index]
                     for _, r in result.head(3).iterrows()
                 ]
             )
@@ -1133,7 +1168,7 @@ class IsoMatcher:
         except Exception as e:
             _log(f"[Coverage] 產生 ISO 覆蓋檢查報表時發生錯誤（略過，不影響主流程）：{e}")
 
-        # 產生 minus 覆蓋檢查報表：哪些 3D Line_combined 沒有任何 ISO 對應
+        # 產生 minus 覆蓋檢查報表：哪些 3D ISO_Match_Key 沒有任何 ISO 對應
         try:
             minus_cov_path = self.check_minus_coverage(
                 base_dir=base_dir,
@@ -1191,7 +1226,7 @@ class IsoMatcher:
             existing = pd.DataFrame()
 
         cols = list(existing.columns) if len(existing) > 0 else [
-            "管線編號", "流水號", "Line_combined", "Raw_last", "群組", "MatchType",
+            "管線編號", "流水號", "ISO_Match_Key", "Raw_3D_PipeCode", "群組", "MatchType",
         ]
 
         new_rows = []
@@ -1199,8 +1234,8 @@ class IsoMatcher:
             row: dict = {c: "" for c in cols}
             row["管線編號"] = sel.get("iso_line", "")
             row["流水號"] = sel.get("iso_spool", "")
-            row["Line_combined"] = sel.get("line_3d", "")
-            row["Raw_last"] = sel.get("line_3d", "")
+            row["ISO_Match_Key"] = sel.get("line_3d", "")
+            row["Raw_3D_PipeCode"] = sel.get("raw_3d") or sel.get("line_3d", "")
             row["MatchType"] = "fuzzy_manual"
             new_rows.append(row)
 

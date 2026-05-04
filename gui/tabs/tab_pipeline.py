@@ -353,7 +353,7 @@ class PipelineTabMixin:
 
         prefix_lay = QHBoxLayout()
         prefix_lay.setSpacing(8)
-        prefix_lay.addWidget(make_field_label("Raw_last 前導字元"))
+        prefix_lay.addWidget(make_field_label("Raw_3D_PipeCode 前導字元"))
         self.txt_raw_prefix = QLineEdit("/")
         self.txt_raw_prefix.setFixedWidth(60)
         self.txt_raw_prefix.setMinimumHeight(36)
@@ -374,7 +374,7 @@ class PipelineTabMixin:
         help_row = QHBoxLayout()
         help_row.setSpacing(12)
         iso_note = make_note(
-            "ISO 比對使用 123_minus_2 的 Line_combined 與 Raw_last 做對應。"
+            "ISO 比對使用 123_minus_2 的 ISO_Match_Key 與 Raw_3D_PipeCode 做對應。"
         )
         help_row.addWidget(iso_note, stretch=1)
         btn_help = QPushButton("❓ 操作說明")
@@ -394,7 +394,7 @@ class PipelineTabMixin:
         )
 
         self.chk_export_headers = QCheckBox(
-            "輸出 Header JSON（依欄位分組 Raw_last）"
+            "輸出 Header JSON（依欄位分組 Raw_3D_PipeCode）"
         )
         self.chk_export_headers.setChecked(True)
         hdr_sec.add_widget(self.chk_export_headers)

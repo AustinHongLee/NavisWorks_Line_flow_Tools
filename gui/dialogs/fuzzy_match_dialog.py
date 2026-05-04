@@ -295,6 +295,7 @@ class FuzzyMatchDialog(QDialog):
             "iso_line": item["iso_line"],
             "iso_spool": item["iso_spool"],
             "line_3d": cand["line_3d"],
+            "raw_3d": cand.get("raw_3d", cand["line_3d"]),
         })
         list_item = self._iso_list.item(self._current_idx)
         if list_item:
@@ -332,6 +333,7 @@ class FuzzyMatchDialog(QDialog):
                     "iso_line": item["iso_line"],
                     "iso_spool": item["iso_spool"],
                     "line_3d": cands[0]["line_3d"],
+                    "raw_3d": cands[0].get("raw_3d", cands[0]["line_3d"]),
                 })
                 list_item = self._iso_list.item(idx)
                 if list_item:
