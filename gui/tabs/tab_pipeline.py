@@ -45,6 +45,13 @@ from gui.dialogs.detect_progress_dialog import DetectProgressDialog
 from gui.workers.detect_worker import LevelDetectWorker
 from utils.pipe_parser import DEFAULT_CONFIG_FILENAME, load_pipe_pattern
 from utils.help_texts import ISO_MINUS_HELP
+from utils.iso_schema import (
+    detect_category_col,
+    detect_pipe_col,
+    detect_spool_col,
+    pick_best_sheet,
+    score_sheet,
+)
 
 if TYPE_CHECKING:
     from gui.main_window import MainWindow  # noqa: F401
@@ -568,42 +575,11 @@ class PipelineTabMixin:
     @staticmethod
     def _score_sheet(xls: pd.ExcelFile, name: str) -> int:
         """為工作表評分：同時含管線 + 流水號欄位得最高分。"""
-        try:
-            df = pd.read_excel(
-                xls, sheet_name=name, nrows=0,
-                dtype=str, engine="openpyxl",
-            )
-            cols = [
-                str(c).strip().lower()
-                for c in df.columns if str(c).strip()
-            ]
-        except Exception:
-            return -1
-
-        has_pipe = any(
-            "管線" in c or "line" in c or "pipe" in c
-            for c in cols
-        )
-        has_spool = any(
-            "流水" in c or "spool" in c or "series" in c
-            for c in cols
-        )
-        score = int(has_pipe) * 2 + int(has_spool)
-        # 偏好名稱含 DRAWING 的工作表
-        if "drawing" in name.lower():
-            score += 1
-        return score
+        return score_sheet(xls, name)
 
     def _pick_best_sheet(self, xls: pd.ExcelFile) -> str:
         """從 Excel 中擇優選擇同時含管線 + 流水號欄位的工作表。"""
-        best_name = xls.sheet_names[0]
-        best_score = -1
-        for name in xls.sheet_names:
-            s = self._score_sheet(xls, name)
-            if s > best_score:
-                best_score = s
-                best_name = name
-        return best_name
+        return pick_best_sheet(xls)
 
     def _load_sheets_and_select(self, xls: pd.ExcelFile):
         """填入工作表下拉並自動選擇最佳工作表。"""
@@ -778,58 +754,17 @@ class PipelineTabMixin:
             cbo.addItems(cols)
 
         # ── 管線欄位自動偵測（精確匹配 > 模糊匹配）──
-        pipe_col = None
-        # 1) 精確名稱：常見 pipe 欄位名
-        precise_pipe = {
-            "line_no", "line no", "管線號", "管線編號",
-            "line number", "pipe no",
-        }
-        for c in cols:
-            if c.lower().strip() in precise_pipe:
-                pipe_col = c
-                break
-        # 2) 寬鬆：含 line/管線 但排除「管線材質」等
-        if not pipe_col:
-            skip_pipe = {"管線材質", "管線等級"}
-            for c in cols:
-                if c in skip_pipe:
-                    continue
-                cl = c.lower()
-                if "管線" in cl or "line" in cl or "pipe" in cl:
-                    pipe_col = c
-                    break
+        pipe_col = detect_pipe_col(cols)
         if pipe_col:
             self.cbo_pipe_col.setCurrentText(pipe_col)
 
         # ── 流水號欄位自動偵測 ──
-        spool_col = None
-        precise_spool = {"流水號", "series no", "spool no"}
-        for c in cols:
-            if c.lower().strip() in precise_spool:
-                spool_col = c
-                break
-        if not spool_col:
-            for c in cols:
-                cl = c.lower()
-                if "流水" in cl or "spool" in cl or "series" in cl:
-                    spool_col = c
-                    break
+        spool_col = detect_spool_col(cols)
         if spool_col:
             self.cbo_spool_col.setCurrentText(spool_col)
 
         # ── 分類欄位自動偵測 ──
-        if "發包分類" in cols:
-            self.cbo_category_col.setCurrentText("發包分類")
-        else:
-            found_cat = False
-            for c in cols:
-                if "分類" in c or "category" in c.lower():
-                    self.cbo_category_col.setCurrentText(c)
-                    found_cat = True
-                    break
-            if not found_cat:
-                # 工作表無分類欄位 → 保留預設（editable combo）
-                self.cbo_category_col.setEditText("發包分類")
+        self.cbo_category_col.setCurrentText(detect_category_col(cols))
 
         # 自動偵測 raw prefix
         self._auto_detect_raw_prefix(iso_path, sheet, pipe_col)

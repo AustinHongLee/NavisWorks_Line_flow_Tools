@@ -12,6 +12,8 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 import pandas as pd
 
+from core.scope_indexer import parse_scope_context
+from utils.iso_schema import detect_schema
 from utils.utils_common import CommonUtils, PIPE_SEG_PATTERN, PipelineKeyExtractor
 from utils.pipe_parser import load_pipe_pattern, parse_pipe_code
 
@@ -63,35 +65,24 @@ def detect_id_level(
         return {"level": None, "confidence": 0.0, "hits": {},
                 "detail": f"無法開啟 ISO 檔案：{exc}"}
 
-    # 決定 sheet
-    if iso_sheet_name and iso_sheet_name in xls.sheet_names:
-        sheet = iso_sheet_name
-    elif "DRAWING LIST" in xls.sheet_names:
-        sheet = "DRAWING LIST"
-    elif "DWG NO.ALL" in xls.sheet_names:
-        sheet = "DWG NO.ALL"
-    else:
-        sheet = xls.sheet_names[0]
+    try:
+        schema = detect_schema(
+            xls,
+            sheet_name=iso_sheet_name,
+            pipe_col_override=pipe_col_override,
+        )
+    except Exception as exc:
+        return {"level": None, "confidence": 0.0, "hits": {},
+                "detail": f"ISO 清單找不到管線欄位：{exc}"}
+    sheet = schema.sheet_name
 
     iso_df = pd.read_excel(xls, sheet_name=sheet, dtype=str).fillna("")
+    try:
+        xls.close()
+    except Exception:
+        pass
 
-    # 決定管線欄位
-    pipe_col: Optional[str] = None
-    if pipe_col_override and pipe_col_override in iso_df.columns:
-        pipe_col = pipe_col_override
-    if pipe_col is None:
-        for cand in ["Line_No", "管線編號"]:
-            if cand in iso_df.columns:
-                pipe_col = cand
-                break
-    if pipe_col is None:
-        for c in iso_df.columns:
-            if "line" in str(c).lower():
-                pipe_col = c
-                break
-    if pipe_col is None:
-        return {"level": None, "confidence": 0.0, "hits": {},
-                "detail": "ISO 清單找不到管線欄位。"}
+    pipe_col: Optional[str] = schema.pipe_col
 
     probes: set[str] = set()
     # 主欄位 (Line_No) — 去重複
@@ -334,6 +325,22 @@ class PipelineExtractor:
                 mode=_mode, index=_idx, regex=_re, raw_prefix=_prefix,
             )
 
+        def _attach_scope_columns(df_src: pd.DataFrame) -> pd.DataFrame:
+            contexts = df_src.apply(
+                lambda r: parse_scope_context(
+                    r.get("Path", ""),
+                    self.sep,
+                    iso_match_key=r.get("ISO_Match_Key", ""),
+                    raw_3d_pipe_code=r.get("Raw_3D_PipeCode", ""),
+                    level=r.get("Level", ""),
+                ),
+                axis=1,
+                result_type="expand",
+            )
+            for col in ["PipeNodePath", "ScopeRoot", "ParentArea", "PipeNodeLevel"]:
+                df_src[col] = contexts[col].astype(str) if col in contexts else ""
+            return df_src
+
         # ── 根據 scan_mode 決定掃描範圍 ──
         if scan_mode == "full":
             # 嚴謹模式：全掃所有列，純靠 PipelineId / regex 辨識
@@ -349,9 +356,11 @@ class PipelineExtractor:
                 if v.strip() else False
             )
             df = df[mask].copy()
+            df = _attach_scope_columns(df)
             out_cols = [
                 "Path", "DisplayName", "Class", "Level",
                 "Raw_3D_PipeCode", "ISO_Match_Key",
+                "PipeNodePath", "ScopeRoot", "ParentArea", "PipeNodeLevel",
             ]
             df[out_cols].to_csv(out_csv, index=False, encoding="utf-8-sig")
             return len(df)
@@ -367,10 +376,12 @@ class PipelineExtractor:
             df["ISO_Match_Key"] = df["Raw_3D_PipeCode"].astype(str).apply(
                 CommonUtils.normalize_line
             )
+            df = _attach_scope_columns(df)
 
             out_cols = [
                 "Path", "DisplayName", "Class", "Level",
                 "Raw_3D_PipeCode", "ISO_Match_Key",
+                "PipeNodePath", "ScopeRoot", "ParentArea", "PipeNodeLevel",
             ]
             df[out_cols].to_csv(out_csv, index=False, encoding="utf-8-sig")
             return len(df)
@@ -405,6 +416,7 @@ class PipelineExtractor:
         df["ISO_Match_Key"] = df["Raw_3D_PipeCode"].astype(str).apply(
             CommonUtils.normalize_line
         )
+        df = _attach_scope_columns(df)
 
         print("[Step1] final columns in minus_1:", list(df.columns))
         df.to_csv(out_csv, index=False, encoding="utf-8-sig")

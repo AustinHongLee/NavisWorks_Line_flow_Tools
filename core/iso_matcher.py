@@ -13,6 +13,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 import pandas as pd
 
 from utils.utils_common import CommonUtils
+from utils.iso_schema import detect_schema
 from utils.pipe_parser import load_pipe_pattern, DEFAULT_CONFIG_FILENAME
 
 # ── 尺寸段偵測用 regex ──
@@ -242,43 +243,26 @@ class IsoMatcher:
         _log(f"[Coverage] 使用 ISO 清單檔案：{iso_path}")
         xls = pd.ExcelFile(iso_path, engine="openpyxl")
 
-        if iso_sheet_name and iso_sheet_name in xls.sheet_names:
-            sheet_to_use = iso_sheet_name
-        else:
-            sheet_to_use = (
-                "DWG NO.ALL" if "DWG NO.ALL" in xls.sheet_names else xls.sheet_names[0]
-            )
+        schema = detect_schema(
+            xls,
+            sheet_name=iso_sheet_name,
+            pipe_col_override=pipe_col_override,
+            spool_col_override=spool_col_override,
+        )
+        sheet_to_use = schema.sheet_name
 
         iso_df = pd.read_excel(xls, sheet_name=sheet_to_use, dtype=str).fillna("")
+        try:
+            xls.close()
+        except Exception:
+            pass
 
-        spool_col: str | None = None
-        if spool_col_override and spool_col_override in iso_df.columns:
-            spool_col = spool_col_override
-        if spool_col is None:
-            for cand in ["流水號", "Spool", "SPOOL"]:
-                if cand in iso_df.columns:
-                    spool_col = cand
-                    break
-        if spool_col is None:
+        spool_col = schema.spool_col
+        if spool_col not in iso_df.columns:
             iso_df["流水號"] = ""
             spool_col = "流水號"
 
-        pipe_col: str | None = None
-        if pipe_col_override and pipe_col_override in iso_df.columns:
-            pipe_col = pipe_col_override
-        if pipe_col is None:
-            if "管線編號" in iso_df.columns:
-                pipe_col = "管線編號"
-            else:
-                for c in iso_df.columns:
-                    if "line" in str(c).lower():
-                        pipe_col = c
-                        break
-        if pipe_col is None:
-            raise ValueError(
-                "[Coverage] ISO 清單找不到『管線編號』或名稱中含 'line' 的欄位，"
-                "請檢查 ISO 欄位名稱，或在 GUI 指定管線欄位名。"
-            )
+        pipe_col = schema.pipe_col
 
         cov = pd.DataFrame()
         cov["管線編號"] = iso_df[pipe_col].astype(str).str.strip()
@@ -364,31 +348,20 @@ class IsoMatcher:
 
         xls = pd.ExcelFile(iso_path, engine="openpyxl")
 
-        if iso_sheet_name and iso_sheet_name in xls.sheet_names:
-            sheet_to_use = iso_sheet_name
-        else:
-            sheet_to_use = (
-                "DWG NO.ALL" if "DWG NO.ALL" in xls.sheet_names else xls.sheet_names[0]
-            )
+        schema = detect_schema(
+            xls,
+            sheet_name=iso_sheet_name,
+            pipe_col_override=pipe_col_override,
+        )
+        sheet_to_use = schema.sheet_name
 
         iso_df = pd.read_excel(xls, sheet_name=sheet_to_use, dtype=str).fillna("")
+        try:
+            xls.close()
+        except Exception:
+            pass
 
-        pipe_col: str | None = None
-        if pipe_col_override and pipe_col_override in iso_df.columns:
-            pipe_col = pipe_col_override
-        if pipe_col is None:
-            if "管線編號" in iso_df.columns:
-                pipe_col = "管線編號"
-            else:
-                for c in iso_df.columns:
-                    if "line" in str(c).lower():
-                        pipe_col = c
-                        break
-        if pipe_col is None:
-            raise ValueError(
-                "[MinusCoverage] ISO 清單找不到『管線編號』或名稱中含 'line' 的欄位，"
-                "請檢查 ISO 欄位名稱，或在 GUI 指定管線欄位名。"
-            )
+        pipe_col = schema.pipe_col
 
         iso_df["pipe_raw"] = iso_df[pipe_col].astype(str).str.strip()
         iso_df["line_norm"] = iso_df["pipe_raw"].apply(CommonUtils.normalize_line)
@@ -561,6 +534,11 @@ class IsoMatcher:
         df_minus["ISO_Match_Key"] = (
             df_minus["ISO_Match_Key"].astype(str).str.strip()
         )
+        scope_cols = ["PipeNodePath", "ScopeRoot", "ParentArea", "PipeNodeLevel"]
+        for c in scope_cols:
+            if c not in df_minus.columns:
+                df_minus[c] = ""
+            df_minus[c] = df_minus[c].astype(str).str.strip()
         df_minus["__line_norm"] = df_minus["ISO_Match_Key"].apply(
             CommonUtils.normalize_line
         )
@@ -600,26 +578,27 @@ class IsoMatcher:
                 f"[Step3] 讀取 ISO 檔案失敗：{iso_path}，請確認檔案未損毀且為 Excel 格式。詳細：{e}"
             ) from e
 
-        sheet_to_use: str
-        if iso_sheet_name:
-            if iso_sheet_name in xls.sheet_names:
-                sheet_to_use = iso_sheet_name
-            else:
-                raise ValueError(
-                    "[Step3] ISO 檔案中找不到指定工作表："
-                    f"{iso_sheet_name}，可用工作表：{xls.sheet_names}"
-                )
-        else:
-            if "DWG NO.ALL" in xls.sheet_names:
-                sheet_to_use = "DWG NO.ALL"
-            else:
-                sheet_to_use = xls.sheet_names[0]
+        try:
+            schema = detect_schema(
+                xls,
+                sheet_name=iso_sheet_name,
+                pipe_col_override=pipe_col_override,
+                spool_col_override=spool_col_override,
+            )
+        except ValueError as e:
+            raise ValueError(f"[Step3] {e}") from e
+
+        sheet_to_use = schema.sheet_name
         _log(f"使用工作表：{sheet_to_use}")
 
         try:
             iso_df = pd.read_excel(
                 xls, sheet_name=sheet_to_use, dtype=str
             ).fillna("")
+            try:
+                xls.close()
+            except Exception:
+                pass
         except Exception as e:
             raise RuntimeError(
                 "[Step3] 讀取 ISO 工作表失敗："
@@ -635,46 +614,15 @@ class IsoMatcher:
             if not str(c).startswith("__")
         ]
 
-        spool_col: str | None = None
-        if spool_col_override:
-            if spool_col_override in iso_df.columns:
-                spool_col = spool_col_override
-            else:
-                raise ValueError(
-                    "[Step3] ISO 工作表找不到使用者指定的流水號欄位："
-                    f"{spool_col_override}，請確認欄位名稱與大小寫。"
-                )
-        if spool_col is None:
-            for cand in ["流水號", "Spool", "SPOOL"]:
-                if cand in iso_df.columns:
-                    spool_col = cand
-                    break
-        if spool_col is None:
+        for warning in schema.warnings:
+            _log(f"[Schema] {warning}")
+
+        spool_col = schema.spool_col
+        if spool_col not in iso_df.columns:
             iso_df["流水號"] = ""
             spool_col = "流水號"
 
-        pipe_col: str | None = None
-        if pipe_col_override:
-            if pipe_col_override in iso_df.columns:
-                pipe_col = pipe_col_override
-            else:
-                raise ValueError(
-                    "[Step3] ISO 工作表找不到使用者指定的管線編號欄位："
-                    f"{pipe_col_override}，請確認欄位名稱與大小寫。"
-                )
-        if pipe_col is None:
-            if "管線編號" in iso_df.columns:
-                pipe_col = "管線編號"
-            else:
-                for c in iso_df.columns:
-                    if "line" in str(c).lower():
-                        pipe_col = c
-                        break
-        if pipe_col is None:
-            raise ValueError(
-                "[Step3] ISO 清單找不到『管線編號』或名稱中含 'line' 的欄位，"
-                "請檢查 ISO 欄位名稱，或在 GUI 指定管線欄位名。"
-            )
+        pipe_col = schema.pipe_col
 
         iso_df["__pipe_raw"] = iso_df[pipe_col].astype(str).str.strip()
         iso_df["流水號"] = iso_df[spool_col].astype(str).str.strip()
@@ -697,11 +645,19 @@ class IsoMatcher:
 
         merged = None
         used_key_type = "primary"
+        minus_identity_cols = [
+            "ISO_Match_Key",
+            "Raw_3D_PipeCode",
+            "PipeNodePath",
+            "ScopeRoot",
+            "ParentArea",
+            "PipeNodeLevel",
+        ]
 
         # ── Phase 1: 嚴謹比對 ──
         if len(iso_keep) > 0:
             minus_map = df_minus[
-                ["__line_norm", "ISO_Match_Key", "Raw_3D_PipeCode"]
+                ["__line_norm"] + minus_identity_cols
             ].drop_duplicates()
             merged = iso_keep.merge(minus_map, on="__line_norm", how="left")
             merged["MatchType"] = "strict"
@@ -711,20 +667,17 @@ class IsoMatcher:
         # ── Phase 2: 去尺寸段比對 ──
         # 3D 常為 5 段 (系統-編號-尺寸-材質-保溫)，ISO 為 4 段 (無尺寸)
         # 將 3D 的 ISO_Match_Key 去掉尺寸段後比對
-        if merged is None or len(merged) < len(iso_df):
+        already_matched = set()
+        if merged is not None:
+            already_matched = set(merged["__line_norm"].tolist())
+        iso_remaining = iso_df[~iso_df["__line_norm"].isin(already_matched)]
+        if len(iso_remaining) > 0:
             _log("Phase2: 嘗試去尺寸段比對 (strip-size)...")
             df_minus["__line_stripped"] = df_minus["__line_norm"].apply(
                 _strip_size_segment
             )
             stripped_set = set(df_minus["__line_stripped"].tolist())
 
-            # 已嚴謹配對的 ISO line_norm
-            already_matched = set()
-            if merged is not None:
-                already_matched = set(merged["__line_norm"].tolist())
-
-            # 找出尚未配對的 ISO 列
-            iso_remaining = iso_df[~iso_df["__line_norm"].isin(already_matched)]
             iso_strip_keep = iso_remaining[
                 iso_remaining["__line_norm"].isin(stripped_set)
             ].copy()
@@ -732,7 +685,7 @@ class IsoMatcher:
 
             if len(iso_strip_keep) > 0:
                 minus_strip_map = df_minus[
-                    ["__line_stripped", "ISO_Match_Key", "Raw_3D_PipeCode"]
+                    ["__line_stripped"] + minus_identity_cols
                 ].drop_duplicates()
                 strip_merged = iso_strip_keep.merge(
                     minus_strip_map,
@@ -765,7 +718,7 @@ class IsoMatcher:
 
             if len(iso_drop_keep) > 0:
                 minus_drop_map = df_minus[
-                    ["__line_drop_last", "ISO_Match_Key", "Raw_3D_PipeCode"]
+                    ["__line_drop_last"] + minus_identity_cols
                 ].drop_duplicates()
                 drop_merged = iso_drop_keep.merge(
                     minus_drop_map,
@@ -792,7 +745,7 @@ class IsoMatcher:
             _log(f"Phase3 fallback base match rows = {len(iso_keep_base)}")
             if len(iso_keep_base) > 0:
                 minus_map_base = df_minus[
-                    ["__line_base", "ISO_Match_Key", "Raw_3D_PipeCode"]
+                    ["__line_base"] + minus_identity_cols
                 ].drop_duplicates()
                 fb_merged = iso_keep_base.merge(
                     minus_map_base,
@@ -810,7 +763,7 @@ class IsoMatcher:
         # ── 確保 merged 存在 ──
         if merged is None:
             minus_map = df_minus[
-                ["__line_norm", "ISO_Match_Key", "Raw_3D_PipeCode"]
+                ["__line_norm"] + minus_identity_cols
             ].drop_duplicates()
             merged = iso_keep.merge(minus_map, on="__line_norm", how="left")
             if "MatchType" not in merged.columns:
@@ -1035,6 +988,10 @@ class IsoMatcher:
                     row["流水號"] = r.get("流水號", "")
                     row["ISO_Match_Key"] = r.get("ISO_Match_Key", "")
                     row["Raw_3D_PipeCode"] = r.get("Raw_3D_PipeCode", "")
+                    row["PipeNodePath"] = r.get("PipeNodePath", "")
+                    row["ScopeRoot"] = r.get("ScopeRoot", "")
+                    row["ParentArea"] = r.get("ParentArea", "")
+                    row["PipeNodeLevel"] = r.get("PipeNodeLevel", "")
 
                     # 群組稍後由 group_map 重算，這裡先給空
                     row["群組"] = ""
@@ -1090,11 +1047,63 @@ class IsoMatcher:
         merged["群組"] = merged["管線編號"].map(group_map).fillna("")
         _log(f"group_map size = {len(group_map)}")
 
+        for c in ["PipeNodePath", "ScopeRoot", "ParentArea", "PipeNodeLevel"]:
+            if c not in merged.columns:
+                merged[c] = ""
+            merged[c] = merged[c].astype(str).str.strip()
+
+        collision_info: Dict[str, Dict[str, object]] = {}
+        if "流水號" in merged.columns:
+            for spool, sub in merged.groupby("流水號", sort=False):
+                spool_key = str(spool).strip()
+                if not spool_key:
+                    continue
+                parents = CommonUtils.unique_preserve(
+                    [
+                        str(v).strip()
+                        for v in sub["ParentArea"].tolist()
+                        if str(v).strip()
+                    ]
+                )
+                if len(parents) <= 1:
+                    parents = CommonUtils.unique_preserve(
+                        [
+                            str(v).strip()
+                            for v in sub["ScopeRoot"].tolist()
+                            if str(v).strip()
+                        ]
+                    )
+                collision_info[spool_key] = {
+                    "count": len(parents),
+                    "parents": " | ".join(parents),
+                    "needs": 1 if len(parents) > 1 else 0,
+                }
+
+        def _collision_value(spool: object, key: str) -> object:
+            info = collision_info.get(str(spool).strip(), {})
+            return info.get(key, 0 if key != "parents" else "")
+
+        merged["CollisionCount"] = merged["流水號"].apply(
+            lambda v: _collision_value(v, "count")
+        )
+        merged["CollisionParents"] = merged["流水號"].apply(
+            lambda v: _collision_value(v, "parents")
+        )
+        merged["NeedsDecision"] = merged["流水號"].apply(
+            lambda v: _collision_value(v, "needs")
+        )
+        needs_count = sum(1 for info in collision_info.values() if info.get("needs"))
+        _log(f"collision groups needing decision = {needs_count}")
+
         full_out_cols = [
             "管線編號",
             "流水號",
             "ISO_Match_Key",
             "Raw_3D_PipeCode",
+            "PipeNodePath",
+            "ScopeRoot",
+            "ParentArea",
+            "PipeNodeLevel",
             "系統",
             "材質",
             "保溫",
@@ -1103,6 +1112,9 @@ class IsoMatcher:
             "發包分類",
             "群組",
             "MatchType",
+            "CollisionCount",
+            "CollisionParents",
+            "NeedsDecision",
         ]
         # 加入 ISO_LIST 的所有原始欄位（去重、保留順序）
         for c in _iso_original_cols:
@@ -1118,7 +1130,12 @@ class IsoMatcher:
                 "流水號",
                 "ISO_Match_Key",
                 "Raw_3D_PipeCode",
+                "ScopeRoot",
+                "ParentArea",
                 "群組",
+                "CollisionCount",
+                "CollisionParents",
+                "NeedsDecision",
             ]
             headers = extra_iso_headers or []
             keep: List[str] = []

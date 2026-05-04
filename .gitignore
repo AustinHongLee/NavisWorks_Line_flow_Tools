@@ -23,6 +23,7 @@ minus_line_coverage.xlsx
 *.log
 run_pipeline_log.txt
 live_selection.json
+tmp*/
 
 # IDE
 .vscode/

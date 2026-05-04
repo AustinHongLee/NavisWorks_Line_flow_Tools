@@ -20,6 +20,14 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from utils.iso_schema import (
+    detect_category_col,
+    detect_pipe_col,
+    detect_spool_col,
+    pick_best_sheet,
+    score_sheet,
+)
+
 
 class IsoSetupDialog(QDialog):
     """ISO LIST 工作表 / 欄位設定。"""
@@ -129,45 +137,17 @@ class IsoSetupDialog(QDialog):
             self._xls = pd.ExcelFile(self._iso_path, engine="openpyxl")
             self.cbo_sheet.addItems(self._xls.sheet_names)
             if self._xls.sheet_names:
-                best = self._pick_best_sheet(self._xls)
+                best = pick_best_sheet(self._xls)
                 self.cbo_sheet.setCurrentText(best)
         except Exception as e:
             QMessageBox.warning(self, "讀取失敗", f"無法讀取 ISO LIST：\n{e}")
 
     @staticmethod
     def _score_sheet(xls: pd.ExcelFile, name: str) -> int:
-        try:
-            df = pd.read_excel(
-                xls, sheet_name=name, nrows=0,
-                dtype=str, engine="openpyxl",
-            )
-            cols = [
-                str(c).strip().lower()
-                for c in df.columns if str(c).strip()
-            ]
-        except Exception:
-            return -1
-
-        has_pipe = any(
-            "管線" in c or "line" in c or "pipe" in c for c in cols
-        )
-        has_spool = any(
-            "流水" in c or "spool" in c or "series" in c for c in cols
-        )
-        score = int(has_pipe) * 2 + int(has_spool)
-        if "drawing" in name.lower():
-            score += 1
-        return score
+        return score_sheet(xls, name)
 
     def _pick_best_sheet(self, xls: pd.ExcelFile) -> str:
-        best_name = xls.sheet_names[0]
-        best_score = -1
-        for name in xls.sheet_names:
-            s = self._score_sheet(xls, name)
-            if s > best_score:
-                best_score = s
-                best_name = name
-        return best_name
+        return pick_best_sheet(xls)
 
     # ────────────────────────────────────────
     #  Column auto-detection
@@ -192,56 +172,25 @@ class IsoSetupDialog(QDialog):
             cbo.addItems(cols)
 
         # ── 管線欄位偵測 ──
-        pipe_col = self._detect_pipe_col(cols)
+        pipe_col = detect_pipe_col(cols)
         if pipe_col:
             self.cbo_pipe.setCurrentText(pipe_col)
 
         # ── 流水號欄位偵測 ──
-        spool_col = self._detect_spool_col(cols)
+        spool_col = detect_spool_col(cols)
         if spool_col:
             self.cbo_spool.setCurrentText(spool_col)
 
         # ── 分類欄位偵測 ──
-        if "發包分類" in cols:
-            self.cbo_category.setCurrentText("發包分類")
-        else:
-            cat = next(
-                (c for c in cols
-                 if "分類" in c or "category" in c.lower()),
-                None,
-            )
-            if cat:
-                self.cbo_category.setCurrentText(cat)
-            else:
-                self.cbo_category.setEditText("發包分類")
+        self.cbo_category.setCurrentText(detect_category_col(cols))
 
     @staticmethod
     def _detect_pipe_col(cols: list[str]) -> Optional[str]:
-        precise = {"line_no", "line no", "管線號", "管線編號",
-                   "line number", "pipe no"}
-        for c in cols:
-            if c.lower().strip() in precise:
-                return c
-        skip = {"管線材質", "管線等級"}
-        for c in cols:
-            if c in skip:
-                continue
-            cl = c.lower()
-            if "管線" in cl or "line" in cl or "pipe" in cl:
-                return c
-        return None
+        return detect_pipe_col(cols)
 
     @staticmethod
     def _detect_spool_col(cols: list[str]) -> Optional[str]:
-        precise = {"流水號", "series no", "spool no"}
-        for c in cols:
-            if c.lower().strip() in precise:
-                return c
-        for c in cols:
-            cl = c.lower()
-            if "流水" in cl or "spool" in cl or "series" in cl:
-                return c
-        return None
+        return detect_spool_col(cols)
 
     # ────────────────────────────────────────
     #  Confirm

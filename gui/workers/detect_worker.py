@@ -15,6 +15,8 @@ from typing import Optional
 import pandas as pd
 from PyQt6.QtCore import QThread, pyqtSignal
 
+from utils.iso_schema import detect_pipe_col, detect_spool_col, pick_best_sheet
+
 
 class LevelDetectWorker(QThread):
     """在背景線程跑 ISO 載入 + Level 偵測。"""
@@ -96,7 +98,7 @@ class LevelDetectWorker(QThread):
             best = self.sheet
             self.log.emit(f"  使用指定工作表：{best}")
         else:
-            best = self._pick_best_sheet(xls)
+            best = pick_best_sheet(xls)
             self.log.emit(f"  自動選擇工作表：{best}")
         self.best_sheet = best
 
@@ -108,8 +110,8 @@ class LevelDetectWorker(QThread):
 
         # ── 偵測管線 / 流水號欄位 ──
         self.progress.emit(20, "偵測管線 / 流水號欄位…")
-        pipe_col = self._detect_pipe_col(cols)
-        spool_col = self._detect_spool_col(cols)
+        pipe_col = detect_pipe_col(cols)
+        spool_col = detect_spool_col(cols)
         if self.pipe_col and self.pipe_col in cols:
             pipe_col = self.pipe_col  # 使用者指定優先
         self.detected_pipe_col = pipe_col
@@ -298,58 +300,12 @@ class LevelDetectWorker(QThread):
 
     @staticmethod
     def _pick_best_sheet(xls: pd.ExcelFile) -> str:
-        best_name = xls.sheet_names[0]
-        best_score = -1
-        for name in xls.sheet_names:
-            try:
-                df = pd.read_excel(
-                    xls, sheet_name=name, nrows=0,
-                    dtype=str, engine="openpyxl",
-                )
-                cols = [
-                    str(c).strip().lower()
-                    for c in df.columns if str(c).strip()
-                ]
-            except Exception:
-                continue
-            has_pipe = any(
-                "管線" in c or "line" in c or "pipe" in c for c in cols
-            )
-            has_spool = any(
-                "流水" in c or "spool" in c or "series" in c for c in cols
-            )
-            score = int(has_pipe) * 2 + int(has_spool)
-            if "drawing" in name.lower():
-                score += 1
-            if score > best_score:
-                best_score = score
-                best_name = name
-        return best_name
+        return pick_best_sheet(xls)
 
     @staticmethod
     def _detect_pipe_col(cols: list[str]) -> Optional[str]:
-        precise = {"line_no", "line no", "管線號", "管線編號",
-                   "line number", "pipe no"}
-        for c in cols:
-            if c.lower().strip() in precise:
-                return c
-        skip = {"管線材質", "管線等級"}
-        for c in cols:
-            if c in skip:
-                continue
-            cl = c.lower()
-            if "管線" in cl or "line" in cl or "pipe" in cl:
-                return c
-        return None
+        return detect_pipe_col(cols)
 
     @staticmethod
     def _detect_spool_col(cols: list[str]) -> Optional[str]:
-        precise = {"流水號", "series no", "spool no"}
-        for c in cols:
-            if c.lower().strip() in precise:
-                return c
-        for c in cols:
-            cl = c.lower()
-            if "流水" in cl or "spool" in cl or "series" in cl:
-                return c
-        return None
+        return detect_spool_col(cols)
