@@ -22,6 +22,8 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from gui.dialogs.trace_viewer_dialog import TraceViewerDialog
+
 
 class FuzzyMatchDialog(QDialog):
     """每條 ISO 行列出候選 3D 線（依命中機率排序），
@@ -171,10 +173,10 @@ class FuzzyMatchDialog(QDialog):
         right = QVBoxLayout()
         right.addWidget(QLabel("3D 候選線（命中機率高→低）："))
         self._cand_table = QTableWidget()
-        self._cand_table.setColumnCount(4)
+        self._cand_table.setColumnCount(5)
         self._cand_table.verticalHeader().setVisible(False)
         self._cand_table.setHorizontalHeaderLabels(
-            ["3D Line", "機率", "原因", "操作"]
+            ["3D Line", "機率", "原因", "追蹤", "操作"]
         )
         self._cand_table.horizontalHeader().setStretchLastSection(False)
         self._cand_table.horizontalHeader().setSectionResizeMode(
@@ -189,7 +191,11 @@ class FuzzyMatchDialog(QDialog):
         self._cand_table.horizontalHeader().setSectionResizeMode(
             3, QHeaderView.ResizeMode.Fixed
         )
-        self._cand_table.horizontalHeader().resizeSection(3, 80)
+        self._cand_table.horizontalHeader().setSectionResizeMode(
+            4, QHeaderView.ResizeMode.Fixed
+        )
+        self._cand_table.horizontalHeader().resizeSection(3, 72)
+        self._cand_table.horizontalHeader().resizeSection(4, 80)
         self._cand_table.setSelectionBehavior(
             QAbstractItemView.SelectionBehavior.SelectRows
         )
@@ -270,14 +276,35 @@ class FuzzyMatchDialog(QDialog):
             self._cand_table.setItem(
                 row_idx, 2, QTableWidgetItem(cand.get("reason", ""))
             )
+            btn_trace = QPushButton("追蹤")
+            btn_trace.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_trace.clicked.connect(
+                lambda checked, ii=i: self._show_candidate_trace(ii)
+            )
+            self._cand_table.setCellWidget(row_idx, 3, btn_trace)
             btn = QPushButton("選擇")
             btn.setProperty("class", "btn-select")
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.clicked.connect(
                 lambda checked, ii=i: self._select_candidate(ii)
             )
-            self._cand_table.setCellWidget(row_idx, 3, btn)
+            self._cand_table.setCellWidget(row_idx, 4, btn)
             self._cand_table.setRowHeight(row_idx, 38)
+
+    def _show_candidate_trace(self, cand_idx: int):
+        item = self._unmatched[self._current_idx]
+        cands = item.get("candidates", [])
+        if cand_idx < 0 or cand_idx >= len(cands):
+            return
+        cand = cands[cand_idx]
+        trace = cand.get("trace") or cand.get("reason", "")
+        dlg = TraceViewerDialog(
+            self,
+            spool_no=item.get("iso_spool", ""),
+            pipe_code=cand.get("line_3d", ""),
+            trace_str=trace,
+        )
+        dlg.exec()
 
     def _on_iso_row_changed(self, row: int):
         if 0 <= row < len(self._unmatched):

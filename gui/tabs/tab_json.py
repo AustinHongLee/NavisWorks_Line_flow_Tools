@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSizePolicy,
@@ -37,6 +38,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from gui.dialogs.trace_viewer_dialog import TraceViewerDialog
 from gui.theme import C_ERROR, C_PRIMARY, C_SUCCESS
 from gui.widgets import read_iso_match
 
@@ -566,6 +568,12 @@ class JsonTabMixin:
             QAbstractItemView.SelectionBehavior.SelectRows
         )
         self._v2_table.setAlternatingRowColors(True)
+        self._v2_table.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu
+        )
+        self._v2_table.customContextMenuRequested.connect(
+            self._on_preview_context_menu
+        )
         self._v2_table.horizontalHeader().setStretchLastSection(
             True
         )
@@ -969,7 +977,9 @@ class JsonTabMixin:
             c for c in self._get_display_columns()
             if c in sub.columns
         ]
-        display = sub[cols].head(_PREVIEW_MAX_ROWS).reset_index(drop=True)
+        preview = sub.head(_PREVIEW_MAX_ROWS)
+        source_indices = preview.index.tolist()
+        display = preview[cols].reset_index(drop=True)
         n_rows = len(display)
         n_cols = len(cols)
 
@@ -982,6 +992,7 @@ class JsonTabMixin:
                 raw = display.iat[r_idx, c_idx]
                 val = "" if (raw is None or str(raw) == "nan") else str(raw)
                 item = QTableWidgetItem(val)
+                item.setData(Qt.ItemDataRole.UserRole, source_indices[r_idx])
                 item.setForeground(Qt.GlobalColor.black)
                 # 被篩選的欄位 → 粗體標記
                 if cols[c_idx] in self._v2_live_filters:
@@ -998,6 +1009,44 @@ class JsonTabMixin:
             self.v2_status_label.setText(
                 f"（顯示前 {_PREVIEW_MAX_ROWS} 列 / 共 {total} 列）"
             )
+
+    def _on_preview_context_menu(self, pos):
+        item = self._v2_table.itemAt(pos)
+        if item is None:
+            return
+        menu = QMenu(self._v2_table)
+        act_trace = menu.addAction("追蹤這條")
+        chosen = menu.exec(self._v2_table.viewport().mapToGlobal(pos))
+        if chosen == act_trace:
+            self._open_preview_trace(item.row())
+
+    def _open_preview_trace(self, row: int):
+        if self._v2_iso_df is None or row < 0:
+            return
+        item = self._v2_table.item(row, 0)
+        if item is None:
+            return
+        source_idx = item.data(Qt.ItemDataRole.UserRole)
+        try:
+            record = self._v2_iso_df.loc[source_idx]
+        except Exception:
+            return
+        trace = str(record.get("IdentityReason", "")).strip()
+        if not trace:
+            QMessageBox.information(self, "Trace", "這筆資料沒有 IdentityReason trace。")
+            return
+        pipe_code = (
+            str(record.get("管線編號", "")).strip()
+            or str(record.get("ISO_Match_Key", "")).strip()
+            or str(record.get("Raw_3D_PipeCode", "")).strip()
+        )
+        dlg = TraceViewerDialog(
+            self,
+            spool_no=str(record.get("流水號", "")).strip(),
+            pipe_code=pipe_code,
+            trace_str=trace,
+        )
+        dlg.exec()
 
     # ════════════════════════════════════════════════════════
     #  統計 & 檔名
