@@ -92,6 +92,7 @@ class PipelineWorker(QThread):
                 spool_col_override=self.p["spool_col"] or None,
                 extra_iso_headers=self.p.get("extra_headers", []),
                 limit_iso_cols=self.p.get("limit_iso_cols", False),
+                first_try_path=self._path(self.p["first_name"]),
             )
             self.fuzzy_unmatched = matcher.fuzzy_unmatched
             fuzzy_count = len(self.fuzzy_unmatched)

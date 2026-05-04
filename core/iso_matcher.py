@@ -16,6 +16,7 @@ from utils.trace_builder import TraceBuilder, append_trace
 from utils.utils_common import CommonUtils, normalize_line_v2
 from utils.iso_schema import detect_schema
 from utils.pipe_parser import load_pipe_pattern, DEFAULT_CONFIG_FILENAME
+from core.iso_recall_engine import IsoRecallEngine
 from core.size_normalizer import STATUS_MATCHED, is_size_like, normalize_size_token
 
 # ── 尺寸段偵測用 regex ──
@@ -593,6 +594,7 @@ class IsoMatcher:
         spool_col_override: Optional[str] = None,
         extra_iso_headers: Optional[List[str]] = None,
         limit_iso_cols: bool = False,
+        first_try_path: Optional[str] = None,
     ) -> int:
         def _log(msg: str) -> None:
             if log_fn is not None:
@@ -1003,6 +1005,24 @@ class IsoMatcher:
             })
 
         recall_candidates_by_iso: dict[str, list[dict]] = {}
+
+        def _merge_recall_candidate(iso_key: str, candidate: dict) -> None:
+            key = str(iso_key).strip()
+            line_3d = str(candidate.get("line_3d", "")).strip()
+            if not key or not line_3d:
+                return
+            bucket = recall_candidates_by_iso.setdefault(key, [])
+            for old in bucket:
+                if str(old.get("line_3d", "")).strip() == line_3d:
+                    if float(candidate.get("score", 0.0)) > float(
+                        old.get("score", 0.0)
+                    ):
+                        old.update(candidate)
+                    return
+            bucket.append(candidate)
+            bucket.sort(key=lambda item: -float(item.get("score", 0.0)))
+            del bucket[10:]
+
         recall_path = os.path.join(base_dir, "candidates.csv")
         if os.path.exists(recall_path):
             try:
@@ -1020,8 +1040,10 @@ class IsoMatcher:
                     recall_df["__recall_iso_norm"] = recall_df["iso_candidate"].apply(
                         lambda value: normalize_line_v2(value)[0]
                     )
-                    for iso_key, sub in recall_df.groupby("__recall_iso_norm", sort=False):
-                        bucket: list[dict] = []
+                    for iso_key, sub in recall_df.groupby(
+                        "__recall_iso_norm",
+                        sort=False,
+                    ):
                         for _, crow in sub.iterrows():
                             line_3d = str(crow.get("normalized", "")).strip()
                             raw_3d = str(crow.get("raw", "")).strip()
@@ -1031,7 +1053,7 @@ class IsoMatcher:
                                 score = float(str(crow.get("score", "0")).strip() or 0)
                             except Exception:
                                 score = 0.0
-                            bucket.append({
+                            _merge_recall_candidate(str(iso_key).strip(), {
                                 "line_3d": line_3d,
                                 "raw_3d": raw_3d or line_3d,
                                 "score": min(max(score, 0.0), 0.88),
@@ -1039,11 +1061,75 @@ class IsoMatcher:
                                 or "ISO 反向召回候選",
                                 "trace": str(crow.get("trace_events", "")).strip(),
                             })
-                        bucket.sort(key=lambda item: -float(item.get("score", 0)))
-                        if bucket:
-                            recall_candidates_by_iso[str(iso_key).strip()] = bucket[:10]
             except Exception as exc:
                 _log(f"Phase4: 讀取 ISO 反向召回候選失敗（略過）：{exc}")
+
+        def _normalize_first_try_chunk(chunk: pd.DataFrame) -> pd.DataFrame:
+            n_cols = min(len(chunk.columns), 5)
+            chunk = chunk.iloc[:, :n_cols].copy()
+            names = ["Path", "DisplayName", "Class", "Level"]
+            if n_cols >= 5:
+                names.append("PipelineId")
+            chunk.columns = names
+            if "PipelineId" not in chunk.columns:
+                chunk["PipelineId"] = ""
+            return chunk.fillna("")
+
+        def _scan_first_try_reverse_recall(path: str) -> int:
+            if not path or not os.path.exists(path):
+                return 0
+            iso_keys = {
+                str(v).strip()
+                for v in iso_still_unmatched["__line_norm"].astype(str).tolist()
+                if str(v).strip()
+            }
+            if not iso_keys:
+                return 0
+            engine = IsoRecallEngine(iso_keys)
+            found = 0
+            try:
+                reader = pd.read_csv(
+                    path,
+                    dtype=str,
+                    encoding="utf-8-sig",
+                    low_memory=False,
+                    on_bad_lines="skip",
+                    chunksize=50000,
+                )
+                for chunk in reader:
+                    chunk = _normalize_first_try_chunk(chunk)
+                    for _, first_row in chunk.iterrows():
+                        for cand in engine.recall_row(
+                            first_row,
+                            max_candidates=5,
+                            min_score=0.50,
+                        ):
+                            _merge_recall_candidate(cand.iso_key, {
+                                "line_3d": cand.normalized_3d,
+                                "raw_3d": cand.raw_3d,
+                                "score": cand.score,
+                                "reason": cand.reason or "ISO 反向召回候選",
+                                "trace": cand.trace,
+                            })
+                            found += 1
+            except Exception as exc:
+                _log(f"Phase4: 掃描 First_try 反向召回失敗（略過）：{exc}")
+                return 0
+            return found
+
+        first_try_to_scan = (
+            first_try_path
+            or os.path.join(base_dir, "First_try.csv")
+        )
+        recall_scan_count = _scan_first_try_reverse_recall(first_try_to_scan)
+        if recall_scan_count:
+            hit_iso_count = sum(
+                1 for items in recall_candidates_by_iso.values() if items
+            )
+            _log(
+                "Phase4: ISO 反向召回掃描 First_try，"
+                f"候選 {recall_scan_count} 筆，涵蓋 {hit_iso_count} 條 ISO"
+            )
 
         self.fuzzy_unmatched = []
         for _, row in iso_still_unmatched.iterrows():

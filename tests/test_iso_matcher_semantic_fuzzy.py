@@ -134,6 +134,53 @@ class IsoMatcherSemanticFuzzyTests(unittest.TestCase):
             self.assertEqual(candidates[0]["raw_3d"], "/TRIM-6FL216Q-N3")
             self.assertLess(candidates[0]["score"], 0.9)
 
+    def test_run_scans_first_try_for_reverse_recall_without_candidates_csv(self):
+        with tempfile.TemporaryDirectory(prefix="tmp_unit_", dir=os.getcwd()) as tmp:
+            base = Path(tmp)
+            minus_path = base / "123_minus_2.csv"
+            iso_path = base / "ISO_LIST.xlsx"
+            first_try_path = base / "First_try.csv"
+            out_path = base / "iso_match.xlsx"
+
+            pd.DataFrame(
+                columns=["ISO_Match_Key", "Raw_3D_PipeCode"]
+            ).to_csv(minus_path, index=False, encoding="utf-8-sig")
+            pd.DataFrame(
+                [{"流水號": "284", "Line num": "/TRIM-6FL216Q-N3-001"}]
+            ).to_excel(iso_path, sheet_name="DWG NO.ALL", index=False)
+            pd.DataFrame(
+                [
+                    {
+                        "Path": "HP6.nwd___/HPS___/HPS-TRIM___/TRIM-6FL216Q-N3",
+                        "DisplayName": "/TRIM-6FL216Q-N3",
+                        "Class": "群組",
+                        "Level": "4",
+                        "PipelineId": "/TRIM-6FL216Q-N3",
+                    }
+                ]
+            ).to_csv(first_try_path, index=False, encoding="utf-8-sig")
+
+            matcher = IsoMatcher()
+            matcher.run(
+                base_dir=str(base),
+                minus_csv_path=str(minus_path),
+                iso_output_path=str(out_path),
+                iso_list_path=str(iso_path),
+                iso_sheet_name="DWG NO.ALL",
+                pipe_col_override="Line num",
+                spool_col_override="流水號",
+                first_try_path=str(first_try_path),
+                log_fn=lambda _msg: None,
+            )
+
+            self.assertEqual(len(matcher.fuzzy_unmatched), 1)
+            candidates = matcher.fuzzy_unmatched[0]["candidates"]
+            self.assertGreaterEqual(len(candidates), 1)
+            self.assertEqual(candidates[0]["line_3d"], "TRIM-6FL216Q-N3")
+            self.assertEqual(candidates[0]["raw_3d"], "/TRIM-6FL216Q-N3")
+            self.assertIn("TRIM", candidates[0]["reason"])
+            self.assertLess(candidates[0]["score"], 0.9)
+
 
 if __name__ == "__main__":
     unittest.main()
