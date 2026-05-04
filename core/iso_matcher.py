@@ -12,6 +12,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 import pandas as pd
 
+from utils.trace_builder import TraceBuilder, append_trace
 from utils.utils_common import CommonUtils
 from utils.iso_schema import detect_schema
 from utils.pipe_parser import load_pipe_pattern, DEFAULT_CONFIG_FILENAME
@@ -52,6 +53,24 @@ _SEG_WEIGHTS = {
     "class":      0.07,   # 材質
     "insulation": 0.05,   # 保溫
     "residual":   0.05,   # 字串相似度餘值
+}
+
+_MATCH_TYPE_SCORES = {
+    "strict": "1.00",
+    "strip_size": "0.95",
+    "drop_last_seg": "0.85",
+    "fallback_base": "0.70",
+    "loose_only": "0.50",
+    "fuzzy_manual": "0.90",
+}
+
+_MATCH_TYPE_REASONS = {
+    "strict": "ISO key 與 3D key 嚴謹吻合",
+    "strip_size": "3D key 去尺寸段後吻合 ISO key",
+    "drop_last_seg": "3D key 去末段後吻合 ISO key",
+    "fallback_base": "使用舊有 base fallback 命中",
+    "loose_only": "僅寬鬆 key 有 ISO 家族，保留待檢查",
+    "fuzzy_manual": "使用者手動確認 fuzzy 候選",
 }
 
 
@@ -158,6 +177,19 @@ def _compute_segment_score(iso_line: str, line_3d: str) -> tuple[float, str]:
     score = min(score, 1.0)
     reason_str = ", ".join(reasons) if reasons else f"相似度{residual:.0%}"
     return round(score, 4), reason_str
+
+
+def _match_trace_for_row(row: pd.Series) -> str:
+    match_type = str(row.get("MatchType", "")).strip()
+    tb = TraceBuilder()
+    if match_type:
+        tb.add("match", match_type)
+    tb.add("iso_key", str(row.get("ISO_Match_Key", "")).strip())
+    score = _MATCH_TYPE_SCORES.get(match_type)
+    if score:
+        tb.add("score", score)
+    tb.add("reason", _MATCH_TYPE_REASONS.get(match_type, "保留既有比對結果"))
+    return tb.build()
 
 
 class IsoMatcher:
@@ -838,11 +870,22 @@ class IsoMatcher:
                     reason = "去尺寸段完全吻合"
                 else:
                     score, reason = _compute_segment_score(iso_line, cand_3d)
+                trace = (
+                    TraceBuilder()
+                    .add("match", "fuzzy_candidate")
+                    .add("iso_key", iso_line)
+                    .add("line_3d", cand_3d)
+                    .add("raw", norm_to_raw.get(cand_3d, cand_3d))
+                    .add("score", f"{score:.2f}")
+                    .add("reason", reason)
+                    .build()
+                )
                 candidates.append({
                     "line_3d": cand_3d,
                     "raw_3d": norm_to_raw.get(cand_3d, cand_3d),
                     "score": score,
                     "reason": reason,
+                    "trace": trace,
                 })
 
             # ── 第二輪：同系統但不同編號的候選 ──
@@ -853,11 +896,22 @@ class IsoMatcher:
                     seen_3d.add(cand_3d)
                     score, reason = _compute_segment_score(iso_line, cand_3d)
                     if score >= 0.20:
+                        trace = (
+                            TraceBuilder()
+                            .add("match", "fuzzy_candidate")
+                            .add("iso_key", iso_line)
+                            .add("line_3d", cand_3d)
+                            .add("raw", norm_to_raw.get(cand_3d, cand_3d))
+                            .add("score", f"{score:.2f}")
+                            .add("reason", reason)
+                            .build()
+                        )
                         candidates.append({
                             "line_3d": cand_3d,
                             "raw_3d": norm_to_raw.get(cand_3d, cand_3d),
                             "score": score,
                             "reason": reason,
+                            "trace": trace,
                         })
 
             # ── 第三輪：全文搜索（前綴不同的候選）──
@@ -867,11 +921,22 @@ class IsoMatcher:
                         continue
                     score, reason = _compute_segment_score(iso_line, str(v))
                     if score >= 0.40:
+                        trace = (
+                            TraceBuilder()
+                            .add("match", "fuzzy_candidate")
+                            .add("iso_key", iso_line)
+                            .add("line_3d", str(v))
+                            .add("raw", norm_to_raw.get(str(v), str(v)))
+                            .add("score", f"{score:.2f}")
+                            .add("reason", reason)
+                            .build()
+                        )
                         candidates.append({
                             "line_3d": v,
                             "raw_3d": norm_to_raw.get(str(v), str(v)),
                             "score": score,
                             "reason": reason,
+                            "trace": trace,
                         })
                         seen_3d.add(v)
 
@@ -1116,6 +1181,16 @@ class IsoMatcher:
         needs_count = sum(1 for info in collision_info.values() if info.get("needs"))
         _log(f"collision groups needing decision = {needs_count}")
 
+        if "IdentityReason" not in merged.columns:
+            merged["IdentityReason"] = ""
+        merged["IdentityReason"] = merged.apply(
+            lambda r: append_trace(
+                r.get("IdentityReason", ""),
+                _match_trace_for_row(r),
+            ),
+            axis=1,
+        )
+
         full_out_cols = [
             "管線編號",
             "流水號",
@@ -1271,6 +1346,9 @@ class IsoMatcher:
         cols = list(existing.columns) if len(existing) > 0 else [
             "管線編號", "流水號", "ISO_Match_Key", "Raw_3D_PipeCode", "群組", "MatchType",
         ]
+        for required_col in ["IdentityReason", "CandidateTrace"]:
+            if required_col not in cols:
+                cols.append(required_col)
 
         new_rows = []
         for sel in selections:
@@ -1280,6 +1358,17 @@ class IsoMatcher:
             row["ISO_Match_Key"] = sel.get("line_3d", "")
             row["Raw_3D_PipeCode"] = sel.get("raw_3d") or sel.get("line_3d", "")
             row["MatchType"] = "fuzzy_manual"
+            trace = (
+                TraceBuilder()
+                .add("match", "fuzzy_manual")
+                .add("iso_key", row["ISO_Match_Key"])
+                .add("raw", row["Raw_3D_PipeCode"])
+                .add("score", _MATCH_TYPE_SCORES["fuzzy_manual"])
+                .add("reason", _MATCH_TYPE_REASONS["fuzzy_manual"])
+                .build()
+            )
+            row["IdentityReason"] = trace
+            row["CandidateTrace"] = trace
             new_rows.append(row)
 
         if not new_rows:

@@ -2,13 +2,13 @@
 """3D pipe identity candidate collection and scoring."""
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass
 from typing import Any
 
 import pandas as pd
 
+from utils.trace_builder import TraceBuilder
 from utils.utils_common import CommonUtils, PIPE_SEG_PATTERN, STRUCTURAL_KEYWORDS
 
 
@@ -63,6 +63,44 @@ class IdentityResolver:
         if len(parts) >= 4:
             return "-".join(parts[:-1])
         return str(value).strip()
+
+    @staticmethod
+    def _trace_source(source: str) -> str:
+        lower = str(source).strip().lower()
+        if lower.startswith("pipelineid"):
+            return "pipeline_id"
+        if lower.startswith("displayname"):
+            return "display_name"
+        if lower.startswith("path"):
+            return "path_smart"
+        return lower or "unknown"
+
+    def _build_candidate_trace(
+        self,
+        candidate: IdentityCandidate,
+        row: pd.Series,
+    ) -> str:
+        tb = TraceBuilder()
+        tb.add("raw", candidate.raw)
+        tb.add("source", self._trace_source(candidate.source))
+        if str(candidate.source).strip().lower().startswith("path"):
+            tb.add("path", self._as_text(row.get("Path", "")))
+        tb.add("level", self._as_text(row.get("Level", "")))
+        tb.add("pattern_check", "pass")
+        tb.add("normalized", candidate.normalized)
+        tb.add("score", f"{candidate.score:.2f}")
+        tb.add("reason", candidate.reason)
+        return tb.build()
+
+    def _build_candidates_trace(self, candidates: list[IdentityCandidate]) -> str:
+        tb = TraceBuilder().add("candidate_count", str(len(candidates)))
+        for idx, cand in enumerate(candidates[:5], start=1):
+            detail = (
+                f"{idx}|{self._trace_source(cand.source)}|"
+                f"{cand.normalized}|{cand.score:.2f}|{cand.reason}"
+            )
+            tb.add_event("candidate", detail)
+        return tb.build()
 
     def _is_known_compatible(self, normalized: str) -> bool:
         if not self.known_iso_keys:
@@ -212,25 +250,24 @@ class IdentityResolver:
     def resolve(self, row: pd.Series) -> dict[str, object]:
         candidates = self.collect_candidates(row)
         best = candidates[0] if candidates else None
-        trace = [
-            {
-                "raw": c.raw,
-                "normalized": c.normalized,
-                "source": c.source,
-                "score": c.score,
-                "reason": c.reason,
-            }
-            for c in candidates[:5]
-        ]
         if best is None:
+            reason = "未找到符合管線格式的 3D 身分證候選"
+            trace = (
+                TraceBuilder()
+                .add("source", "none")
+                .add("level", self._as_text(row.get("Level", "")))
+                .add("pattern_check", "fail")
+                .add("reason", reason)
+                .build()
+            )
             return {
                 "Raw_3D_PipeCode": "",
                 "ISO_Match_Key": "",
                 "MatchSource": "",
                 "ConfidencePrimary": 0.0,
-                "IdentityReason": "未找到符合管線格式的 3D 身分證候選",
+                "IdentityReason": trace,
                 "CandidateCount": 0,
-                "CandidateTrace": "[]",
+                "CandidateTrace": trace,
             }
 
         return {
@@ -238,7 +275,7 @@ class IdentityResolver:
             "ISO_Match_Key": best.normalized,
             "MatchSource": best.source,
             "ConfidencePrimary": best.score,
-            "IdentityReason": best.reason,
+            "IdentityReason": self._build_candidate_trace(best, row),
             "CandidateCount": len(candidates),
-            "CandidateTrace": json.dumps(trace, ensure_ascii=False),
+            "CandidateTrace": self._build_candidates_trace(candidates),
         }
