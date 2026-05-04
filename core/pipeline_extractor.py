@@ -12,9 +12,10 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 import pandas as pd
 
+from core.identity_resolver import IdentityResolver
 from core.scope_indexer import parse_scope_context
-from utils.iso_schema import detect_schema
-from utils.utils_common import CommonUtils, PIPE_SEG_PATTERN, PipelineKeyExtractor
+from utils.iso_schema import detect_schema, load_iso_line_key_set
+from utils.utils_common import CommonUtils
 from utils.pipe_parser import load_pipe_pattern, parse_pipe_code
 
 
@@ -261,6 +262,9 @@ class PipelineExtractor:
         pipeline_index: Optional[int] = None,
         pipeline_regex: Optional[str] = None,
         scan_mode: str = "full",
+        iso_list_path: Optional[str] = None,
+        iso_sheet_name: Optional[str] = None,
+        pipe_col_override: Optional[str] = None,
     ) -> int:
         if not os.path.exists(input_csv):
             raise FileNotFoundError(f"[Step1] 找不到輸入檔 First_try CSV：{input_csv}")
@@ -303,27 +307,40 @@ class PipelineExtractor:
             raw_df["PipelineId"] = ""
         raw_df = raw_df.fillna("")
 
-        # ── 管線編號擷取：優先 PipelineId，fallback Path regex ──
-        _sep = self.sep
-        _mode = pipeline_mode
-        _idx = pipeline_index
-        _re = pipeline_regex
-        _prefix = self.raw_prefix
+        known_iso_keys: set[str] = set()
+        if iso_list_path and os.path.exists(iso_list_path):
+            try:
+                known_iso_keys = load_iso_line_key_set(
+                    iso_list_path,
+                    sheet_name=iso_sheet_name,
+                    pipe_col_override=pipe_col_override,
+                )
+            except Exception:
+                known_iso_keys = set()
 
-        def _extract_row(row: pd.Series) -> str:
-            """優先使用 PipelineId（C# 屬性值），為空則 fallback Path regex。
+        resolver = IdentityResolver(
+            sep=self.sep,
+            raw_prefix=self.raw_prefix,
+            known_iso_keys=known_iso_keys,
+        )
 
-            PipelineId 直接原值保留 → 確保 Raw_3D_PipeCode 與 3D 身分證完全一致；
-            normalize_line 負責在比對時去除前綴。
-            """
-            pid = str(row.get("PipelineId", "")).strip()
-            if pid:
-                # 直接保留 3D 身分證原值（含前綴 /）
-                return pid
-            return PipelineKeyExtractor.extract_pipeline(
-                row["Path"], _sep,
-                mode=_mode, index=_idx, regex=_re, raw_prefix=_prefix,
+        def _attach_identity_columns(df_src: pd.DataFrame) -> pd.DataFrame:
+            resolved = df_src.apply(
+                resolver.resolve,
+                axis=1,
+                result_type="expand",
             )
+            for col in [
+                "Raw_3D_PipeCode",
+                "ISO_Match_Key",
+                "MatchSource",
+                "ConfidencePrimary",
+                "IdentityReason",
+                "CandidateCount",
+                "CandidateTrace",
+            ]:
+                df_src[col] = resolved[col] if col in resolved else ""
+            return df_src
 
         def _attach_scope_columns(df_src: pd.DataFrame) -> pd.DataFrame:
             contexts = df_src.apply(
@@ -345,21 +362,15 @@ class PipelineExtractor:
         if scan_mode == "full":
             # 嚴謹模式：全掃所有列，純靠 PipelineId / regex 辨識
             df = raw_df.copy()
-            df["Raw_3D_PipeCode"] = df.apply(_extract_row, axis=1)
-            df["ISO_Match_Key"] = df["Raw_3D_PipeCode"].astype(str).apply(
-                CommonUtils.normalize_line
-            )
-            # 嚴格過濾：ISO_Match_Key 必須符合 PIPE_SEG_PATTERN
-            # （含數字 + 含連字號 + 純 ASCII）→ 才是真正管線編號
-            mask = df["ISO_Match_Key"].astype(str).apply(
-                lambda v: bool(PIPE_SEG_PATTERN.match(v.strip()))
-                if v.strip() else False
-            )
+            df = _attach_identity_columns(df)
+            mask = df["ISO_Match_Key"].astype(str).str.strip().ne("")
             df = df[mask].copy()
             df = _attach_scope_columns(df)
             out_cols = [
                 "Path", "DisplayName", "Class", "Level",
                 "Raw_3D_PipeCode", "ISO_Match_Key",
+                "MatchSource", "ConfidencePrimary", "IdentityReason",
+                "CandidateCount", "CandidateTrace",
                 "PipeNodePath", "ScopeRoot", "ParentArea", "PipeNodeLevel",
             ]
             df[out_cols].to_csv(out_csv, index=False, encoding="utf-8-sig")
@@ -372,15 +383,15 @@ class PipelineExtractor:
                 raw_df["Level"].astype(str).str.strip() == id_level_str
             ].copy()
 
-            df["Raw_3D_PipeCode"] = df.apply(_extract_row, axis=1)
-            df["ISO_Match_Key"] = df["Raw_3D_PipeCode"].astype(str).apply(
-                CommonUtils.normalize_line
-            )
+            df = _attach_identity_columns(df)
+            df = df[df["ISO_Match_Key"].astype(str).str.strip().ne("")].copy()
             df = _attach_scope_columns(df)
 
             out_cols = [
                 "Path", "DisplayName", "Class", "Level",
                 "Raw_3D_PipeCode", "ISO_Match_Key",
+                "MatchSource", "ConfidencePrimary", "IdentityReason",
+                "CandidateCount", "CandidateTrace",
                 "PipeNodePath", "ScopeRoot", "ParentArea", "PipeNodeLevel",
             ]
             df[out_cols].to_csv(out_csv, index=False, encoding="utf-8-sig")
@@ -412,10 +423,8 @@ class PipelineExtractor:
 
         df = pd.DataFrame(result_records).fillna("")
 
-        df["Raw_3D_PipeCode"] = df.apply(_extract_row, axis=1)
-        df["ISO_Match_Key"] = df["Raw_3D_PipeCode"].astype(str).apply(
-            CommonUtils.normalize_line
-        )
+        df = _attach_identity_columns(df)
+        df = df[df["ISO_Match_Key"].astype(str).str.strip().ne("")].copy()
         df = _attach_scope_columns(df)
 
         print("[Step1] final columns in minus_1:", list(df.columns))

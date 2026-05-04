@@ -11,6 +11,8 @@ from typing import Optional
 
 import pandas as pd
 
+from utils.utils_common import CommonUtils
+
 
 PREFERRED_SHEETS = {
     "dwg no.all": 5,
@@ -195,3 +197,36 @@ def detect_schema(
         category_col=detect_category_col(cols),
         warnings=warnings,
     )
+
+
+def load_iso_line_key_set(
+    iso_path: str,
+    sheet_name: Optional[str] = None,
+    pipe_col_override: Optional[str] = None,
+) -> set[str]:
+    xls = pd.ExcelFile(iso_path, engine="openpyxl")
+    try:
+        schema = detect_schema(
+            xls,
+            sheet_name=sheet_name,
+            pipe_col_override=pipe_col_override,
+        )
+        df = pd.read_excel(
+            xls,
+            sheet_name=schema.sheet_name,
+            dtype=str,
+            engine="openpyxl",
+        ).fillna("")
+    finally:
+        try:
+            xls.close()
+        except Exception:
+            pass
+
+    keys: set[str] = set()
+    if schema.pipe_col in df.columns:
+        for value in df[schema.pipe_col].astype(str).str.strip().tolist():
+            norm = CommonUtils.normalize_line(value)
+            if norm:
+                keys.add(norm)
+    return keys

@@ -10,6 +10,7 @@ from PyQt6.QtCore import QThread, pyqtSignal
 from core.pipeline_extractor import PipelineExtractor
 from core.pipeline_grouper import PipelineGrouper
 from core.iso_matcher import IsoMatcher
+from core.resolved_mapping import build_resolved_mapping
 
 
 class PipelineWorker(QThread):
@@ -43,6 +44,9 @@ class PipelineWorker(QThread):
                 filter_key=self.p["filter_key"],
                 id_level=self.p["id_level"],
                 scan_mode=scan_mode,
+                iso_list_path=self.p.get("iso_list_path") or None,
+                iso_sheet_name=self.p.get("iso_sheet") or None,
+                pipe_col_override=self.p.get("pipe_col") or None,
             )
             self.log_signal.emit(f"  ✓ Step1 完成，輸出 {n1} 筆")
             self.progress_signal.emit(33, "Step1 完成")
@@ -85,11 +89,26 @@ class PipelineWorker(QThread):
                 self.log_signal.emit(
                     f"  ⚠ 尚有 {fuzzy_count} 條 ISO 行未配對，將進入模糊比對…"
                 )
+
+            # ── Step 3b ──
+            self.progress_signal.emit(92, "Step3b：建立 resolved mapping...")
+            self.log_signal.emit("═══ Step3b：建立 JSON-safe resolved_mapping.csv ═══")
+            stats = build_resolved_mapping(
+                iso_match_path=self._path("iso_match.xlsx"),
+                output_path=self._path("resolved_mapping.csv"),
+                log_fn=lambda msg: self.log_signal.emit(f"  {msg}"),
+            )
+            self.log_signal.emit(
+                "  ✓ resolved_mapping 完成，"
+                f"可匯出 {stats['resolved']} 筆；"
+                f"需人工決定 {stats['needs_decision']} 筆"
+            )
             self.progress_signal.emit(100, "全部完成！")
 
             summary = (
                 f"全部完成！ Step1={n1} → "
-                f"Step2=明細{n2d}/群組{n2g} → iso_match={n3}"
+                f"Step2=明細{n2d}/群組{n2g} → "
+                f"iso_match={n3} → resolved={stats['resolved']}"
             )
             self.finished_signal.emit(True, summary)
 

@@ -329,6 +329,7 @@ class MainWindow(QMainWindow, PipelineTabMixin, JsonTabMixin):
             "minus2_csv": os.path.join(base, "123_minus_2.csv"),
             "minus2_xlsx": os.path.join(base, "123_minus_2.xlsx"),
             "iso_match_xlsx": os.path.join(base, "iso_match.xlsx"),
+            "resolved_mapping_csv": os.path.join(base, "resolved_mapping.csv"),
         }
 
     def _log(self, msg: str):
@@ -452,6 +453,21 @@ class MainWindow(QMainWindow, PipelineTabMixin, JsonTabMixin):
                                 iso_path, sels
                             )
                             self._log(f"✓ 模糊比對已追加 {added} 筆")
+                            try:
+                                from core.resolved_mapping import build_resolved_mapping
+                                stats = build_resolved_mapping(
+                                    iso_match_path=iso_path,
+                                    output_path=cfg["resolved_mapping_csv"],
+                                    log_fn=self._log,
+                                )
+                                self._log(
+                                    "✓ resolved_mapping 已重建，"
+                                    f"可匯出 {stats['resolved']} 筆"
+                                )
+                            except Exception as rebuild_exc:
+                                self._log(
+                                    f"⚠ 重建 resolved_mapping 失敗：{rebuild_exc}"
+                                )
                             QMessageBox.information(
                                 self,
                                 "模糊比對完成",
@@ -519,6 +535,7 @@ class MainWindow(QMainWindow, PipelineTabMixin, JsonTabMixin):
             cfg["minus2_xlsx"],
             os.path.join(base, "iso_line_coverage.xlsx"),
             os.path.join(base, "minus_line_coverage.xlsx"),
+            cfg["resolved_mapping_csv"],
         ]
         deleted = []
         failed = []

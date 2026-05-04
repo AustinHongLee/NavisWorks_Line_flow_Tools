@@ -656,24 +656,27 @@ class JsonTabMixin:
     # ════════════════════════════════════════════════════════
 
     def _v2_auto_load_source(self):
-        """自動從專案目錄載入 iso_match.xlsx。"""
+        """自動從專案目錄載入 resolved_mapping.csv，退回 iso_match.xlsx。"""
         try:
             cfg = self._get_paths()
         except Exception as e:
             QMessageBox.warning(self, "提示", str(e))
             return
 
-        iso_path = cfg["iso_match_xlsx"]
-        if not os.path.exists(iso_path):
+        source_path = cfg.get("resolved_mapping_csv")
+        if not source_path or not os.path.exists(source_path):
+            source_path = cfg["iso_match_xlsx"]
+
+        if not os.path.exists(source_path):
             QMessageBox.warning(
                 self,
                 "找不到檔案",
-                "iso_match.xlsx 不存在。\n"
-                "請先執行 Step3 產出比對結果，"
+                "resolved_mapping.csv / iso_match.xlsx 不存在。\n"
+                "請先執行全部流程產出比對結果，"
                 "或點擊「選擇檔案」手動指定。",
             )
             return
-        self._v2_load_source(iso_path)
+        self._v2_load_source(source_path)
 
     def _v2_browse_source(self):
         """手動選擇 Excel 檔案。"""
@@ -716,6 +719,10 @@ class JsonTabMixin:
         if "Raw_3D_PipeCode" in df.columns:
             raw_n = df["Raw_3D_PipeCode"].nunique()
             raw_info = f"  |  {raw_n} 筆管線"
+        if "Resolved" in df.columns:
+            resolved_n = int((df["Resolved"].astype(str).str.strip() == "1").sum())
+            pending_n = row_count - resolved_n
+            raw_info += f"  |  可匯出 {resolved_n} 筆 / 待決定 {pending_n} 筆"
         self._v2_lbl_source.setText(
             f"📄 {fname}    {row_count} 列 × {col_count} 欄{raw_info}"
         )
@@ -746,9 +753,13 @@ class JsonTabMixin:
         self._v2_cbo_group_key.clear()
         self._v2_cbo_group_key.addItem("— 不分組（平面清單）")
         self._v2_cbo_group_key.addItems(cat_cols)
-        # 預設選「群組」
-        if "群組" in cat_cols:
+        # resolved mapping 預設以流水號（圖號）分組，舊資料退回群組。
+        if "Resolved" in cols and "流水號" in cat_cols:
+            self._v2_cbo_group_key.setCurrentText("流水號")
+        elif "群組" in cat_cols:
             self._v2_cbo_group_key.setCurrentText("群組")
+        elif "流水號" in cat_cols:
+            self._v2_cbo_group_key.setCurrentText("流水號")
         self._v2_cbo_group_key.blockSignals(False)
 
         # 填充篩選列下拉選單

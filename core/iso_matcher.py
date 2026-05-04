@@ -539,6 +539,17 @@ class IsoMatcher:
             if c not in df_minus.columns:
                 df_minus[c] = ""
             df_minus[c] = df_minus[c].astype(str).str.strip()
+        identity_cols = [
+            "MatchSource",
+            "ConfidencePrimary",
+            "IdentityReason",
+            "CandidateCount",
+            "CandidateTrace",
+        ]
+        for c in identity_cols:
+            if c not in df_minus.columns:
+                df_minus[c] = ""
+            df_minus[c] = df_minus[c].astype(str).str.strip()
         df_minus["__line_norm"] = df_minus["ISO_Match_Key"].apply(
             CommonUtils.normalize_line
         )
@@ -648,6 +659,11 @@ class IsoMatcher:
         minus_identity_cols = [
             "ISO_Match_Key",
             "Raw_3D_PipeCode",
+            "MatchSource",
+            "ConfidencePrimary",
+            "IdentityReason",
+            "CandidateCount",
+            "CandidateTrace",
             "PipeNodePath",
             "ScopeRoot",
             "ParentArea",
@@ -988,6 +1004,11 @@ class IsoMatcher:
                     row["流水號"] = r.get("流水號", "")
                     row["ISO_Match_Key"] = r.get("ISO_Match_Key", "")
                     row["Raw_3D_PipeCode"] = r.get("Raw_3D_PipeCode", "")
+                    row["MatchSource"] = r.get("MatchSource", "")
+                    row["ConfidencePrimary"] = r.get("ConfidencePrimary", "")
+                    row["IdentityReason"] = r.get("IdentityReason", "")
+                    row["CandidateCount"] = r.get("CandidateCount", "")
+                    row["CandidateTrace"] = r.get("CandidateTrace", "")
                     row["PipeNodePath"] = r.get("PipeNodePath", "")
                     row["ScopeRoot"] = r.get("ScopeRoot", "")
                     row["ParentArea"] = r.get("ParentArea", "")
@@ -1100,6 +1121,11 @@ class IsoMatcher:
             "流水號",
             "ISO_Match_Key",
             "Raw_3D_PipeCode",
+            "MatchSource",
+            "ConfidencePrimary",
+            "IdentityReason",
+            "CandidateCount",
+            "CandidateTrace",
             "PipeNodePath",
             "ScopeRoot",
             "ParentArea",

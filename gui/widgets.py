@@ -294,7 +294,13 @@ def read_iso_match(path: str) -> pd.DataFrame:
     if ext in (".xlsx", ".xlsm", ".xls"):
         xls = pd.ExcelFile(path, engine="openpyxl")
         sheet = "結果" if "結果" in xls.sheet_names else xls.sheet_names[0]
-        df = pd.read_excel(xls, sheet_name=sheet, dtype=str).fillna("")
+        try:
+            df = pd.read_excel(xls, sheet_name=sheet, dtype=str).fillna("")
+        finally:
+            try:
+                xls.close()
+            except Exception:
+                pass
     else:
         df = pd.read_csv(path, dtype=str, encoding="utf-8-sig").fillna("")
     df = df.rename(columns={c: str(c).strip() for c in df.columns})

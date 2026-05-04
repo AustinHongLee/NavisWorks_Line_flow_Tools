@@ -52,6 +52,10 @@ class JsonExporter:
             df = pd.read_excel(xls, sheet_name=sheet_name, dtype=str).fillna(
                 ""
             )
+            try:
+                xls.close()
+            except Exception:
+                pass
         else:
             self._log_print("[Step4_v2] 讀取 iso_match 為 CSV 格式")
             df = pd.read_csv(
@@ -71,6 +75,23 @@ class JsonExporter:
             self._log_print("[Step4_v2][ERROR] iso_match 缺少 Raw_3D_PipeCode 欄位")
             raise ValueError("改比對結果缺少必要欄位『Raw_3D_PipeCode』")
         df["Raw_3D_PipeCode"] = df["Raw_3D_PipeCode"].astype(str).str.strip()
+
+        if "Resolved" in df.columns:
+            before = len(df)
+            df = df[df["Resolved"].astype(str).str.strip().isin(["1", "True", "true"])].copy()
+            self._log_print(
+                f"[Step4_v2] 使用 resolved_mapping，只匯出 Resolved=1：{before} -> {len(df)}"
+            )
+        elif "NeedsDecision" in df.columns:
+            before = len(df)
+            df = df[
+                ~df["NeedsDecision"].astype(str).str.strip().isin(
+                    ["1", "True", "true", "yes", "Y", "是"]
+                )
+            ].copy()
+            self._log_print(
+                f"[Step4_v2] 偵測到 collision 欄位，略過 NeedsDecision=1：{before} -> {len(df)}"
+            )
 
         if out_dir is None or not str(out_dir).strip():
             out_dir = (
@@ -216,10 +237,10 @@ class JsonExporter:
                 self._log_print(
                     "[Step4_v2] 未指定 group_key，使用預設邏輯。"
                 )
-                if "群組" in sub.columns:
-                    group_key = "群組"
-                elif "流水號" in sub.columns:
+                if "流水號" in sub.columns:
                     group_key = "流水號"
+                elif "群組" in sub.columns:
+                    group_key = "群組"
                 else:
                     group_key = "__ALL__"
             else:
