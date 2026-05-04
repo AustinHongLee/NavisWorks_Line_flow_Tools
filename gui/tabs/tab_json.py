@@ -38,6 +38,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from gui.dialogs.collision_decision_dialog import CollisionDecisionDialog
 from gui.dialogs.trace_viewer_dialog import TraceViewerDialog
 from gui.theme import C_ERROR, C_PRIMARY, C_SUCCESS
 from gui.widgets import read_iso_match
@@ -304,6 +305,12 @@ class JsonTabMixin:
         btn_browse.setFixedHeight(28)
         btn_browse.clicked.connect(self._v2_browse_source)
         tb_lay.addWidget(btn_browse)
+
+        btn_collision = QPushButton("處理衝突")
+        btn_collision.setToolTip("開啟 NeedsDecision=1 的 collision 決策視窗")
+        btn_collision.setFixedHeight(28)
+        btn_collision.clicked.connect(self._v2_open_collision_decisions)
+        tb_lay.addWidget(btn_collision)
 
         lay.addWidget(toolbar)
         lay.addSpacing(6)
@@ -697,6 +704,67 @@ class JsonTabMixin:
         )
         if path:
             self._v2_load_source(path)
+
+    def _v2_open_collision_decisions(self):
+        """開啟 resolved_mapping collision 決策流程。"""
+        try:
+            cfg = self._get_paths()
+        except Exception as e:
+            QMessageBox.warning(self, "提示", str(e))
+            return
+        mapping_path = getattr(self, "_v2_source_path", "") or cfg.get(
+            "resolved_mapping_csv", ""
+        )
+        if not mapping_path or not os.path.exists(mapping_path):
+            mapping_path = cfg.get("resolved_mapping_csv", "")
+        if not mapping_path or not os.path.exists(mapping_path):
+            QMessageBox.warning(
+                self,
+                "找不到 resolved_mapping",
+                "請先執行流程產生 resolved_mapping.csv，或在 JSON 匯出頁載入該檔。",
+            )
+            return
+        if not str(mapping_path).lower().endswith(".csv"):
+            QMessageBox.warning(
+                self,
+                "資料來源不支援",
+                "Collision 決策目前只回寫 resolved_mapping.csv。",
+            )
+            return
+
+        try:
+            from core.collision_resolver import (
+                apply_collision_decisions,
+                load_collision_groups,
+            )
+            groups = load_collision_groups(mapping_path)
+        except Exception as e:
+            QMessageBox.critical(self, "讀取 collision 失敗", str(e))
+            return
+
+        if not groups:
+            QMessageBox.information(self, "Collision 決策", "目前沒有需要人工決策的流水號。")
+            return
+
+        dlg = CollisionDecisionDialog(self, groups)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        decisions = dlg.get_decisions()
+        if not decisions:
+            QMessageBox.information(self, "Collision 決策", "沒有套用任何決策。")
+            return
+        try:
+            stats = apply_collision_decisions(mapping_path, decisions)
+        except Exception as e:
+            QMessageBox.critical(self, "套用失敗", str(e))
+            return
+
+        QMessageBox.information(
+            self,
+            "Collision 決策完成",
+            f"已選定 {stats['selected']} 列，排除 {stats['rejected']} 列。",
+        )
+        self._v2_load_source(mapping_path)
 
     def _v2_load_source(self, path: str):
         """載入資料並建立 Excel 式篩選面板。"""
