@@ -75,7 +75,7 @@ class CollisionDecisionDialog(QDialog):
         self._choice_table = QTableWidget()
         self._choice_table.setColumnCount(5)
         self._choice_table.setHorizontalHeaderLabels(
-            ["區域", "列數", "Raw 數", "Raw 範例", "操作"]
+            ["決策點", "列數", "Raw 數", "Raw 範例", "操作"]
         )
         self._choice_table.verticalHeader().setVisible(False)
         self._choice_table.setSelectionBehavior(
@@ -140,9 +140,11 @@ class CollisionDecisionDialog(QDialog):
         selected_area = self._decisions.get(spool, "")
         for choice in choices:
             area = str(choice.get("area", ""))
+            label = str(choice.get("label", "")) or area
             row = self._choice_table.rowCount()
             self._choice_table.insertRow(row)
-            area_item = QTableWidgetItem(area)
+            area_item = QTableWidgetItem(label)
+            area_item.setToolTip(area)
             if area == selected_area:
                 area_item.setForeground(QColor("#059669"))
                 font = area_item.font()

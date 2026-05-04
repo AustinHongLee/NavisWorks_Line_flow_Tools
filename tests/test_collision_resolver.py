@@ -111,6 +111,60 @@ class CollisionResolverTests(unittest.TestCase):
             self.assertEqual(rejected["Resolved"], "0")
             self.assertEqual(rejected["ResolutionStatus"], "user_rejected")
 
+    def test_uses_collision_parent_hint_for_path_level_decision(self):
+        with tempfile.TemporaryDirectory(prefix="tmp_unit_") as tmp:
+            path = os.path.join(tmp, "resolved_mapping.csv")
+            p1 = "HP6.nwd___CHO_NO_INSU.RVM___/HPS___/LINE"
+            p2 = "HP6.nwd___CHO_INSU.RVM___/HPS___/LINE"
+            pd.DataFrame(
+                [
+                    {
+                        "Resolved": "0",
+                        "ResolutionStatus": "needs_decision",
+                        "流水號": "16",
+                        "Raw_3D_PipeCode": "/LINE",
+                        "ParentArea": "/HPS-PIPE",
+                        "ScopeRoot": "CHO_NO_INSU.RVM",
+                        "PipeNodePath": p1,
+                        "CollisionParents": f"PipeNodePath: {p1} | {p2}",
+                        "NeedsDecision": "1",
+                    },
+                    {
+                        "Resolved": "0",
+                        "ResolutionStatus": "needs_decision",
+                        "流水號": "16",
+                        "Raw_3D_PipeCode": "/LINE",
+                        "ParentArea": "/HPS-PIPE",
+                        "ScopeRoot": "CHO_INSU.RVM",
+                        "PipeNodePath": p2,
+                        "CollisionParents": f"PipeNodePath: {p1} | {p2}",
+                        "NeedsDecision": "1",
+                    },
+                ]
+            ).to_csv(path, index=False, encoding="utf-8-sig")
+
+            groups = load_collision_groups(path)
+            self.assertEqual(len(groups), 1)
+            self.assertEqual(groups[0]["area_col"], "PipeNodePath")
+            self.assertEqual({c["area"] for c in groups[0]["choices"]}, {p1, p2})
+
+            stats = apply_collision_decisions(
+                path,
+                {"16": {"area_col": "PipeNodePath", "area": p1}},
+            )
+            self.assertEqual(stats["selected"], 1)
+            self.assertEqual(stats["rejected"], 1)
+
+            result = pd.read_csv(path, dtype=str, encoding="utf-8-sig").fillna("")
+            self.assertEqual(
+                result[result["PipeNodePath"].eq(p1)].iloc[0]["ResolutionStatus"],
+                "user_selected",
+            )
+            self.assertEqual(
+                result[result["PipeNodePath"].eq(p2)].iloc[0]["ResolutionStatus"],
+                "user_rejected",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -11,7 +11,7 @@ from typing import Optional
 
 import pandas as pd
 
-from utils.utils_common import CommonUtils
+from utils.utils_common import CommonUtils, normalize_line_v2
 
 
 PREFERRED_SHEETS = {
@@ -229,4 +229,7 @@ def load_iso_line_key_set(
             norm = CommonUtils.normalize_line(value)
             if norm:
                 keys.add(norm)
+            norm_v2, _events = normalize_line_v2(value)
+            if norm_v2:
+                keys.add(norm_v2)
     return keys

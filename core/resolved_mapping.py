@@ -165,8 +165,10 @@ def build_resolved_mapping(
             "ResolutionStatus",
             "流水號",
             "Raw_3D_PipeCode",
+            "PipeNodePath",
             "ScopeRoot",
             "ParentArea",
+            "PipeNodeLevel",
         ],
         keep="first",
     )

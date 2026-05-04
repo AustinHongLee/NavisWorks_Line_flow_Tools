@@ -28,9 +28,28 @@ CHOICE_COLUMNS = [
 ]
 
 
+def _collision_parent_dimension(df: pd.DataFrame) -> str:
+    if "CollisionParents" not in df.columns:
+        return ""
+    for value in df["CollisionParents"].astype(str).tolist():
+        text = value.strip()
+        if not text or ":" not in text:
+            continue
+        name = text.split(":", 1)[0].strip()
+        if name in df.columns and name in CHOICE_COLUMNS:
+            return name
+    return ""
+
+
 def _choice_col_for_sub(df: pd.DataFrame) -> str:
     """Choose the most useful dimension for a collision group."""
+    hinted = _collision_parent_dimension(df)
+    if hinted:
+        return hinted
+
     fallback = ""
+    best_col = ""
+    best_count = 0
     for col in CHOICE_COLUMNS:
         if col not in df.columns:
             continue
@@ -41,9 +60,39 @@ def _choice_col_for_sub(df: pd.DataFrame) -> str:
         }
         if values and not fallback:
             fallback = col
-        if len(values) > 1:
-            return col
+        if len(values) > best_count:
+            best_col = col
+            best_count = len(values)
+    if best_count > 1:
+        return best_col
     return fallback
+
+
+def _first_nonempty(df: pd.DataFrame, col: str) -> str:
+    if col not in df.columns:
+        return ""
+    for value in df[col].astype(str).tolist():
+        text = value.strip()
+        if text:
+            return text
+    return ""
+
+
+def _short_path_tail(path: str, limit: int = 3) -> str:
+    parts = [p for p in str(path).split("___") if str(p).strip()]
+    if len(parts) <= limit:
+        return str(path).strip()
+    return "___".join(parts[-limit:])
+
+
+def _choice_label(area_col: str, area_key: str, area_sub: pd.DataFrame) -> str:
+    if area_col != "PipeNodePath":
+        return area_key
+    scope = _first_nonempty(area_sub, "ScopeRoot")
+    raw = _first_nonempty(area_sub, "Raw_3D_PipeCode")
+    tail = _short_path_tail(area_key)
+    pieces = [p for p in [scope, raw, tail] if p]
+    return " | ".join(pieces) if pieces else area_key
 
 
 def load_collision_groups(mapping_path: str) -> list[dict[str, object]]:
@@ -87,6 +136,7 @@ def load_collision_groups(mapping_path: str) -> list[dict[str, object]]:
             choices.append(
                 {
                     "area": area_key,
+                    "label": _choice_label(area_col, area_key, area_sub),
                     "row_count": int(len(area_sub)),
                     "raw_count": int(len(set(raws))),
                     "sample_raw": raws[0] if raws else "",

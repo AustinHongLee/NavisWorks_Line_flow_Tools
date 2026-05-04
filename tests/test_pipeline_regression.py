@@ -12,7 +12,7 @@ from core.identity_resolver import IdentityResolver
 from core.json_exporter import JsonExporter
 from core.pipeline_extractor import PipelineExtractor
 from core.resolved_mapping import build_resolved_mapping
-from utils.iso_schema import detect_schema
+from utils.iso_schema import detect_schema, load_iso_line_key_set
 
 
 class PipelineRegressionTests(unittest.TestCase):
@@ -51,6 +51,26 @@ class PipelineRegressionTests(unittest.TestCase):
             self.assertEqual(schema.sheet_name, "DWG NO.ALL")
             self.assertEqual(schema.pipe_col, "Line num")
             self.assertEqual(schema.spool_col, "流水號")
+
+    def test_iso_key_set_includes_v2_size_normalization(self):
+        with self._tmpdir() as d:
+            iso_path = os.path.join(d, "ISO_LIST.xlsx")
+            pd.DataFrame(
+                [{"Line num": "/3_4-S11G-N4-20951Q", "流水號": "37"}]
+            ).to_excel(
+                iso_path,
+                index=False,
+                sheet_name="DWG NO.ALL",
+                engine="openpyxl",
+            )
+
+            keys = load_iso_line_key_set(
+                iso_path,
+                sheet_name="DWG NO.ALL",
+                pipe_col_override="Line num",
+            )
+
+            self.assertIn("3/4-S11G-N4-20951Q", keys)
 
     def test_identity_resolver_uses_iso_whitelist(self):
         known = {"1-S11U-AI-00001", "4-S11-P-60338"}
@@ -288,6 +308,48 @@ class PipelineRegressionTests(unittest.TestCase):
                     {"流水號": "2", "管線號": ["/B-LINE-A"]},
                 ],
             )
+
+    def test_resolved_mapping_keeps_distinct_pipe_node_paths(self):
+        with self._tmpdir() as d:
+            iso_match = os.path.join(d, "iso_match.xlsx")
+            mapping = os.path.join(d, "resolved_mapping.csv")
+            p1 = "HP6.nwd___CHO_NO_INSU.RVM___/HPS___/HPS-PIPE___/LINE"
+            p2 = "HP6.nwd___CHO_INSU.RVM___/HPS___/HPS-PIPE___/LINE"
+            pd.DataFrame(
+                [
+                    {
+                        "流水號": "16",
+                        "管線編號": "/LINE",
+                        "Raw_3D_PipeCode": "/LINE",
+                        "PipeNodePath": p1,
+                        "ScopeRoot": "CHO_NO_INSU.RVM",
+                        "ParentArea": "/HPS-PIPE",
+                        "PipeNodeLevel": "4",
+                        "NeedsDecision": "1",
+                        "CollisionParents": f"PipeNodePath: {p1} | {p2}",
+                        "MatchType": "strict",
+                    },
+                    {
+                        "流水號": "16",
+                        "管線編號": "/LINE",
+                        "Raw_3D_PipeCode": "/LINE",
+                        "PipeNodePath": p2,
+                        "ScopeRoot": "CHO_INSU.RVM",
+                        "ParentArea": "/HPS-PIPE",
+                        "PipeNodeLevel": "4",
+                        "NeedsDecision": "1",
+                        "CollisionParents": f"PipeNodePath: {p1} | {p2}",
+                        "MatchType": "strict",
+                    },
+                ]
+            ).to_excel(iso_match, index=False, sheet_name="結果")
+
+            stats = build_resolved_mapping(iso_match, mapping)
+            result = pd.read_csv(mapping, dtype=str, encoding="utf-8-sig").fillna("")
+
+            self.assertEqual(stats["needs_decision"], 2)
+            self.assertEqual(len(result), 2)
+            self.assertEqual(set(result["PipeNodePath"]), {p1, p2})
 
 
 if __name__ == "__main__":
