@@ -11,10 +11,12 @@ from PyQt6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -26,23 +28,41 @@ from core.identity_investigator import InvestigationPaths, investigate_identity
 from gui.dialogs.trace_viewer_dialog import TraceViewerDialog
 
 
-def _make_table(columns: list[str]) -> QTableWidget:
+ROLE_RECORD = int(Qt.ItemDataRole.UserRole) + 10
+
+
+def _style_for_table() -> str:
+    return (
+        "QTableWidget { background: #FFFFFF; color: #0F172A;"
+        " border: 1px solid #E2E8F0; border-radius: 8px;"
+        " gridline-color: #F1F5F9; alternate-background-color: #F8FAFC;"
+        " selection-background-color: #DBEAFE; selection-color: #0F172A; }"
+        "QHeaderView::section { background: #F8FAFC; color: #334155;"
+        " border: 0; border-bottom: 1px solid #E2E8F0; padding: 7px 8px;"
+        " font-weight: 700; font-size: 12px; }"
+        "QTableWidget::item { padding: 5px 8px; border: 0; }"
+        "QTableCornerButton::section { background: #F8FAFC; border: 0; }"
+    )
+
+
+def _make_table(columns: list[str], stretch_last: bool = True) -> QTableWidget:
     table = QTableWidget(0, len(columns))
     table.setHorizontalHeaderLabels(columns)
     table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
     table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+    table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
     table.setAlternatingRowColors(True)
     table.setWordWrap(False)
     table.verticalHeader().setVisible(False)
-    table.setStyleSheet(
-        "QTableWidget { background: #FFFFFF; color: #0F172A;"
-        " border: 1px solid #CBD5E1; border-radius: 6px; gridline-color: #E2E8F0; }"
-        "QHeaderView::section { background: #F8FAFC; color: #334155;"
-        " border: 0; border-bottom: 1px solid #CBD5E1; padding: 6px;"
-        " font-weight: 700; }"
-        "QTableWidget::item { padding: 4px; }"
-        "QTableWidget::item:selected { background: #DBEAFE; color: #0F172A; }"
-    )
+    table.verticalHeader().setDefaultSectionSize(34)
+    table.horizontalHeader().setStretchLastSection(stretch_last)
+    table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+    if stretch_last and columns:
+        table.horizontalHeader().setSectionResizeMode(
+            len(columns) - 1,
+            QHeaderView.ResizeMode.Stretch,
+        )
+    table.setStyleSheet(_style_for_table())
     return table
 
 
@@ -54,10 +74,26 @@ def _fill_table(table: QTableWidget, rows: list[dict[str, str]]) -> None:
     table.setRowCount(len(rows))
     for r, record in enumerate(rows):
         for c, col in enumerate(columns):
-            item = QTableWidgetItem(str(record.get(col, "")))
-            item.setToolTip(str(record.get(col, "")))
+            value = str(record.get(col, ""))
+            item = QTableWidgetItem(value)
+            item.setToolTip(value)
+            if c == 0:
+                item.setData(ROLE_RECORD, record)
             table.setItem(r, c, item)
     table.resizeColumnsToContents()
+    if columns:
+        table.horizontalHeader().setSectionResizeMode(
+            len(columns) - 1,
+            QHeaderView.ResizeMode.Stretch,
+        )
+
+
+def _clear_layout(layout) -> None:
+    while layout.count():
+        item = layout.takeAt(0)
+        widget = item.widget()
+        if widget is not None:
+            widget.deleteLater()
 
 
 class IdentityInspectorWidget(QWidget):
@@ -72,72 +108,108 @@ class IdentityInspectorWidget(QWidget):
         super().__init__(parent)
         self._paths_getter = paths_getter
         self._last_result: dict[str, Any] = {}
+        self._metric_labels: dict[str, QLabel] = {}
+        self._family_labels: dict[str, QLabel] = {}
         self._build_ui()
         if initial_query:
             self.set_query(initial_query)
 
     def _build_ui(self) -> None:
+        self.setObjectName("identityInspector")
         self.setStyleSheet(
-            "QWidget { background: #FFFFFF; color: #0F172A; }"
-            "QLabel { color: #0F172A; }"
-            "QLineEdit { background: #FFFFFF; color: #0F172A;"
-            " border: 1px solid #CBD5E1; border-radius: 6px;"
-            " padding: 7px 10px; font-size: 13px; }"
-            "QPushButton { background: #2563EB; color: #FFFFFF;"
-            " border: 1px solid #1D4ED8; border-radius: 6px;"
-            " padding: 7px 14px; font-size: 13px; font-weight: 700; }"
-            "QPushButton:hover { background: #1D4ED8; }"
+            "#identityInspector { background: #F1F5F9; color: #0F172A; }"
+            "#identityInspector QLabel { color: #0F172A; }"
+            "#identityInspector QLineEdit { background: #FFFFFF; color: #0F172A;"
+            " border: 1px solid #CBD5E1; border-radius: 7px;"
+            " padding: 8px 11px; font-size: 13px; }"
+            "#identityInspector QLineEdit:focus { border-color: #2563EB; }"
+            "#identityInspector QPushButton { background: #2563EB; color: #FFFFFF;"
+            " border: 1px solid #1D4ED8; border-radius: 7px;"
+            " padding: 8px 16px; font-size: 13px; font-weight: 700; }"
+            "#identityInspector QPushButton:hover { background: #1D4ED8; }"
+            "#identityInspector QSplitter::handle { background: #E2E8F0; }"
         )
         root = QVBoxLayout(self)
-        root.setContentsMargins(12, 10, 12, 10)
+        root.setContentsMargins(14, 12, 14, 12)
         root.setSpacing(10)
 
-        header = QHBoxLayout()
-        title = QLabel("調查")
-        title.setStyleSheet("font-size: 20px; font-weight: 800;")
-        header.addWidget(title)
+        root.addWidget(self._build_command_bar())
+        root.addWidget(self._build_metrics_row())
+
+        workbench = QSplitter(Qt.Orientation.Horizontal)
+        workbench.setChildrenCollapsible(False)
+        workbench.addWidget(self._build_left_column())
+        workbench.addWidget(self._build_right_column())
+        workbench.setSizes([390, 910])
+        root.addWidget(workbench, stretch=1)
+
+    def _build_command_bar(self) -> QWidget:
+        frame = self._card("commandBar")
+        lay = QHBoxLayout(frame)
+        lay.setContentsMargins(16, 12, 16, 12)
+        lay.setSpacing(12)
+
+        title_box = QVBoxLayout()
+        title_box.setSpacing(2)
+        title = QLabel("身份調查")
+        title.setStyleSheet("font-size: 21px; font-weight: 900; color: #0F172A;")
+        title_box.addWidget(title)
+        desc = QLabel("從一條 ISO、流水號或 3D Raw 回看 First_try / minus_1 / resolved_mapping 的證據鏈。")
+        desc.setStyleSheet("font-size: 12px; color: #64748B;")
+        desc.setWordWrap(True)
+        title_box.addWidget(desc)
+        lay.addLayout(title_box)
+
         self.txt_query = QLineEdit()
-        self.txt_query.setPlaceholderText("輸入 ISO 管線、流水號、3D Raw、PipelineId，例如 TRIM-6FL216Q-N3-001")
+        self.txt_query.setPlaceholderText("例如 TRIM-6FL216Q-N3-001、流水號、/TRIM-6FL216Q-N3")
         self.txt_query.returnPressed.connect(self.search)
-        header.addWidget(self.txt_query, stretch=1)
+        lay.addWidget(self.txt_query, stretch=1)
+
         btn = QPushButton("搜尋")
+        btn.setFixedWidth(96)
         btn.clicked.connect(self.search)
-        header.addWidget(btn)
-        root.addLayout(header)
+        lay.addWidget(btn)
+        return frame
 
-        self.lbl_status = QLabel("輸入關鍵字後搜尋。")
-        self.lbl_status.setStyleSheet("color: #64748B; font-size: 12px;")
-        self.lbl_status.setWordWrap(True)
-        root.addWidget(self.lbl_status)
+    def _build_metrics_row(self) -> QWidget:
+        row = QWidget()
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(10)
+        for key, title, value, accent in [
+            ("iso_hit_count", "ISO 命中", "0", "#2563EB"),
+            ("minus1_hit_count", "minus_1 線索", "0", "#059669"),
+            ("first_try_hit_count", "First_try 原始列", "0", "#7C3AED"),
+            ("drop_last_3d_count", "去末段 3D 命中", "0", "#D97706"),
+        ]:
+            card = self._metric_card(title, value, accent)
+            lay.addWidget(card, stretch=1)
+            self._metric_labels[key] = card.findChild(QLabel, "metricValue")
+        return row
 
-        top_splitter = QSplitter(Qt.Orientation.Horizontal)
-        top_splitter.addWidget(self._build_family_panel())
+    def _build_left_column(self) -> QWidget:
+        column = QWidget()
+        lay = QVBoxLayout(column)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(10)
+
+        lay.addWidget(self._build_family_card())
+        lay.addWidget(self._build_level_card(), stretch=1)
+        return column
+
+    def _build_right_column(self) -> QWidget:
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.setChildrenCollapsible(False)
+
         self.tbl_iso = _make_table([
             "流水號",
             "管線編號",
-            "ISO_Match_Key",
-            "Raw_3D_PipeCode",
-            "Resolved",
             "ResolutionStatus",
             "MatchType",
-            "MatchScore",
+            "Raw_3D_PipeCode",
             "NeedsDecision",
         ])
-        top_splitter.addWidget(self._wrap_table("ISO / resolved_mapping", self.tbl_iso))
-        top_splitter.setSizes([360, 720])
-        root.addWidget(top_splitter, stretch=2)
-
-        bottom_splitter = QSplitter(Qt.Orientation.Vertical)
-        self.tbl_level = _make_table([
-            "Level",
-            "筆數",
-            "Raw_3D_PipeCode",
-            "ISO_Match_Key",
-            "ScopeRoot",
-            "ParentArea",
-            "MatchSource",
-        ])
-        bottom_splitter.addWidget(self._wrap_table("3D Level 命中摘要", self.tbl_level))
+        splitter.addWidget(self._section("ISO / resolved_mapping", self.tbl_iso))
 
         self.tbl_minus = _make_table([
             "Level",
@@ -145,51 +217,45 @@ class IdentityInspectorWidget(QWidget):
             "ISO_Match_Key",
             "DisplayName",
             "PipelineId",
-            "ScopeRoot",
             "ParentArea",
             "MatchSource",
             "ConfidencePrimary",
-            "IdentityReason",
         ])
         self.tbl_minus.itemDoubleClicked.connect(self._open_trace_from_minus)
-        bottom_splitter.addWidget(self._wrap_table("123_minus_1.csv 命中列（雙擊看 trace）", self.tbl_minus))
+        splitter.addWidget(self._section("3D 證據列（雙擊看 trace）", self.tbl_minus))
 
-        self.tbl_first = _make_table(["Path", "DisplayName", "Class", "Level", "PipelineId"])
-        bottom_splitter.addWidget(self._wrap_table("First_try.csv 原始命中列", self.tbl_first))
-        bottom_splitter.setSizes([120, 260, 220])
-        root.addWidget(bottom_splitter, stretch=5)
+        self.tbl_first = _make_table([
+            "Level",
+            "DisplayName",
+            "PipelineId",
+            "Path",
+        ])
+        splitter.addWidget(self._section("First_try.csv 原始命中列", self.tbl_first))
+        splitter.setSizes([150, 290, 260])
+        return splitter
 
-    def _build_family_panel(self) -> QWidget:
-        frame = QFrame()
-        frame.setStyleSheet(
-            "QFrame { background: #F8FAFC; border: 1px solid #CBD5E1;"
-            " border-radius: 8px; }"
-            "QLabel { background: transparent; }"
-        )
+    def _build_family_card(self) -> QWidget:
+        frame = self._card("familyCard")
         lay = QGridLayout(frame)
-        lay.setContentsMargins(12, 10, 12, 10)
-        lay.setHorizontalSpacing(10)
-        lay.setVerticalSpacing(6)
-        self._family_labels: dict[str, QLabel] = {}
+        lay.setContentsMargins(16, 14, 16, 14)
+        lay.setHorizontalSpacing(12)
+        lay.setVerticalSpacing(8)
+
+        title = QLabel("身份家族")
+        title.setStyleSheet("font-size: 15px; font-weight: 900; color: #0F172A;")
+        lay.addWidget(title, 0, 0, 1, 2)
+
         rows = [
-            ("query", "查詢"),
-            ("normalized", "normalize_line_v2"),
-            ("normalize_events", "正規化事件"),
+            ("normalized", "標準化"),
             ("drop_last", "去末段"),
             ("series_prefix", "系列前綴"),
-            ("strict_3d_count", "strict 3D 命中"),
-            ("drop_last_3d_count", "去末段命中"),
+            ("strict_3d_count", "strict 命中"),
             ("series_3d_count", "系列命中"),
-            ("iso_hit_count", "ISO 命中列"),
-            ("minus1_hit_count", "minus_1 命中列"),
-            ("first_try_hit_count", "First_try 命中列"),
+            ("normalize_events", "正規化事件"),
         ]
-        title = QLabel("身份家族")
-        title.setStyleSheet("font-size: 15px; font-weight: 800; color: #0F172A;")
-        lay.addWidget(title, 0, 0, 1, 2)
         for i, (key, label) in enumerate(rows, start=1):
             name = QLabel(label)
-            name.setStyleSheet("color: #475569; font-size: 12px; font-weight: 700;")
+            name.setStyleSheet("color: #64748B; font-size: 12px; font-weight: 700;")
             lay.addWidget(name, i, 0)
             value = QLabel("-")
             value.setWordWrap(True)
@@ -202,17 +268,86 @@ class IdentityInspectorWidget(QWidget):
             self._family_labels[key] = value
         return frame
 
-    def _wrap_table(self, title: str, table: QTableWidget) -> QWidget:
-        frame = QFrame()
-        frame.setStyleSheet("QFrame { background: #FFFFFF; border: 0; }")
+    def _build_level_card(self) -> QWidget:
+        frame = self._card("levelCard")
         lay = QVBoxLayout(frame)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(4)
-        lbl = QLabel(title)
-        lbl.setStyleSheet("font-size: 13px; font-weight: 800; color: #1E293B;")
-        lay.addWidget(lbl)
+        lay.setContentsMargins(16, 14, 16, 14)
+        lay.setSpacing(10)
+
+        title_row = QHBoxLayout()
+        title = QLabel("3D Level 摘要")
+        title.setStyleSheet("font-size: 15px; font-weight: 900; color: #0F172A;")
+        title_row.addWidget(title)
+        title_row.addStretch()
+        self.lbl_level_hint = QLabel("尚未搜尋")
+        self.lbl_level_hint.setStyleSheet("color: #94A3B8; font-size: 11px;")
+        title_row.addWidget(self.lbl_level_hint)
+        lay.addLayout(title_row)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        holder = QWidget()
+        self.level_list = QVBoxLayout(holder)
+        self.level_list.setContentsMargins(0, 0, 0, 0)
+        self.level_list.setSpacing(8)
+        self.level_list.addWidget(self._empty_label("搜尋後會在這裡列出 Level 命中。"))
+        self.level_list.addStretch()
+        scroll.setWidget(holder)
+        lay.addWidget(scroll)
+        return frame
+
+    def _section(self, title: str, table: QTableWidget) -> QWidget:
+        frame = self._card("section")
+        lay = QVBoxLayout(frame)
+        lay.setContentsMargins(14, 12, 14, 14)
+        lay.setSpacing(8)
+        label = QLabel(title)
+        label.setStyleSheet("font-size: 14px; font-weight: 900; color: #1E293B;")
+        lay.addWidget(label)
         lay.addWidget(table)
         return frame
+
+    def _metric_card(self, title: str, value: str, accent: str) -> QFrame:
+        card = self._card("metric")
+        card.setStyleSheet(
+            "QFrame { background: #FFFFFF; border: 1px solid #E2E8F0;"
+            " border-left: 4px solid " + accent + "; border-radius: 8px; }"
+            "QLabel { background: transparent; }"
+        )
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(14, 10, 14, 10)
+        lay.setSpacing(2)
+        t = QLabel(title)
+        t.setStyleSheet("font-size: 11px; font-weight: 800; color: #64748B;")
+        lay.addWidget(t)
+        v = QLabel(value)
+        v.setObjectName("metricValue")
+        v.setStyleSheet("font-size: 24px; font-weight: 900; color: #0F172A;")
+        lay.addWidget(v)
+        return card
+
+    @staticmethod
+    def _card(name: str) -> QFrame:
+        card = QFrame()
+        card.setObjectName(name)
+        card.setStyleSheet(
+            "QFrame { background: #FFFFFF; border: 1px solid #E2E8F0;"
+            " border-radius: 8px; }"
+            "QLabel { background: transparent; border: 0; }"
+        )
+        return card
+
+    @staticmethod
+    def _empty_label(text: str) -> QLabel:
+        label = QLabel(text)
+        label.setWordWrap(True)
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setStyleSheet(
+            "color: #94A3B8; font-size: 12px; padding: 18px;"
+            " border: 1px dashed #CBD5E1; border-radius: 8px; background: #F8FAFC;"
+        )
+        return label
 
     def set_query(self, query: str) -> None:
         self.txt_query.setText(str(query or ""))
@@ -231,34 +366,101 @@ class IdentityInspectorWidget(QWidget):
         family = result.get("family", {})
         for key, lbl in self._family_labels.items():
             lbl.setText(str(family.get(key, "-") or "-"))
-        _fill_table(self.tbl_iso, result.get("iso_rows", []))
-        _fill_table(self.tbl_level, result.get("level_summary", []))
-        _fill_table(self.tbl_minus, result.get("minus1_rows", []))
-        _fill_table(self.tbl_first, result.get("first_try_rows", []))
-        self.lbl_status.setText(
-            "結果："
-            f"ISO {family.get('iso_hit_count', '0')} 列，"
-            f"minus_1 {family.get('minus1_hit_count', '0')} 列，"
-            f"First_try {family.get('first_try_hit_count', '0')} 列。"
+        for key, lbl in self._metric_labels.items():
+            lbl.setText(str(family.get(key, "0") or "0"))
+        _fill_table(self.tbl_iso, self._compact_iso_rows(result.get("iso_rows", [])))
+        _fill_table(self.tbl_minus, self._compact_minus_rows(result.get("minus1_rows", [])))
+        _fill_table(self.tbl_first, self._compact_first_rows(result.get("first_try_rows", [])))
+        self._fill_level_cards(result.get("level_summary", []))
+
+    def _fill_level_cards(self, rows: list[dict[str, str]]) -> None:
+        _clear_layout(self.level_list)
+        if not rows:
+            self.lbl_level_hint.setText("0 筆")
+            self.level_list.addWidget(self._empty_label("這次查詢沒有在 123_minus_1.csv 找到 3D Level 線索。"))
+            self.level_list.addStretch()
+            return
+        self.lbl_level_hint.setText(f"{len(rows)} 個 Level")
+        for record in rows:
+            self.level_list.addWidget(self._level_chip(record))
+        self.level_list.addStretch()
+
+    def _level_chip(self, record: dict[str, str]) -> QWidget:
+        frame = QFrame()
+        frame.setStyleSheet(
+            "QFrame { background: #F8FAFC; border: 1px solid #E2E8F0;"
+            " border-radius: 8px; }"
+            "QLabel { background: transparent; }"
         )
+        lay = QVBoxLayout(frame)
+        lay.setContentsMargins(12, 10, 12, 10)
+        lay.setSpacing(5)
+
+        head = QHBoxLayout()
+        level = QLabel(f"Level {record.get('Level', '-')}")
+        level.setStyleSheet("font-size: 14px; font-weight: 900; color: #2563EB;")
+        head.addWidget(level)
+        head.addStretch()
+        count = QLabel(f"{record.get('筆數', '0')} 列")
+        count.setStyleSheet(
+            "background: #EFF6FF; color: #1D4ED8; border-radius: 10px;"
+            " padding: 2px 8px; font-size: 11px; font-weight: 800;"
+        )
+        head.addWidget(count)
+        lay.addLayout(head)
+
+        raw = QLabel(record.get("Raw_3D_PipeCode", ""))
+        raw.setWordWrap(True)
+        raw.setTextInteractionFlags(raw.textInteractionFlags() | Qt.TextInteractionFlag.TextSelectableByMouse)
+        raw.setStyleSheet("font-size: 12px; color: #0F172A; font-weight: 700;")
+        lay.addWidget(raw)
+
+        meta = QLabel(
+            f"{record.get('MatchSource', '-')}"
+            f" · {record.get('ParentArea', '-') or record.get('ScopeRoot', '-')}"
+        )
+        meta.setWordWrap(True)
+        meta.setStyleSheet("font-size: 11px; color: #64748B;")
+        lay.addWidget(meta)
+        return frame
+
+    @staticmethod
+    def _compact_iso_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+        keys = ["流水號", "管線編號", "ResolutionStatus", "MatchType", "Raw_3D_PipeCode", "NeedsDecision"]
+        return [{key: row.get(key, "") for key in keys} for row in rows]
+
+    @staticmethod
+    def _compact_minus_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+        keys = [
+            "Level",
+            "Raw_3D_PipeCode",
+            "ISO_Match_Key",
+            "DisplayName",
+            "PipelineId",
+            "ParentArea",
+            "MatchSource",
+            "ConfidencePrimary",
+        ]
+        return [{**{key: row.get(key, "") for key in keys}, "_record": row} for row in rows]
+
+    @staticmethod
+    def _compact_first_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+        keys = ["Level", "DisplayName", "PipelineId", "Path"]
+        return [{key: row.get(key, "") for key in keys} for row in rows]
 
     def _open_trace_from_minus(self, item: QTableWidgetItem) -> None:
         row = item.row()
-        trace_col = self._column_index(self.tbl_minus, "IdentityReason")
-        raw_col = self._column_index(self.tbl_minus, "Raw_3D_PipeCode")
-        key_col = self._column_index(self.tbl_minus, "ISO_Match_Key")
-        trace = self.tbl_minus.item(row, trace_col).text() if trace_col >= 0 and self.tbl_minus.item(row, trace_col) else ""
-        raw = self.tbl_minus.item(row, raw_col).text() if raw_col >= 0 and self.tbl_minus.item(row, raw_col) else ""
-        key = self.tbl_minus.item(row, key_col).text() if key_col >= 0 and self.tbl_minus.item(row, key_col) else ""
+        record = None
+        first_item = self.tbl_minus.item(row, 0)
+        if first_item is not None:
+            record = first_item.data(ROLE_RECORD)
+        record = record if isinstance(record, dict) else {}
+        source = record.get("_record", record)
+        trace = str(source.get("IdentityReason", ""))
+        raw = str(source.get("Raw_3D_PipeCode", ""))
+        key = str(source.get("ISO_Match_Key", ""))
         dlg = TraceViewerDialog(self, spool_no="", pipe_code=key or raw, trace_str=trace)
         dlg.exec()
-
-    @staticmethod
-    def _column_index(table: QTableWidget, name: str) -> int:
-        for i in range(table.columnCount()):
-            if table.horizontalHeaderItem(i).text() == name:
-                return i
-        return -1
 
 
 class IdentityInspectorDialog(QDialog):
@@ -272,8 +474,8 @@ class IdentityInspectorDialog(QDialog):
     ):
         super().__init__(parent)
         self.setWindowTitle("身份調查")
-        self.setMinimumSize(1100, 760)
-        self.resize(1320, 860)
+        self.setMinimumSize(1180, 760)
+        self.resize(1360, 880)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         self.inspector = IdentityInspectorWidget(self, paths_getter, initial_query)
