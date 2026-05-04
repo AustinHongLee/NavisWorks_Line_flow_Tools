@@ -37,18 +37,20 @@ from gui.dialogs.project_setup_dialog import ProjectSetupDialog
 from gui.dialogs.iso_setup_dialog import IsoSetupDialog
 from gui.tabs.tab_pipeline import PipelineTabMixin
 from gui.tabs.tab_json import JsonTabMixin
+from gui.tabs.tab_investigation import InvestigationTabMixin
 
 
 _NAV_ITEMS = [
     ("📁", "專案設定"),
     ("🔗", "ISO 比對"),
     ("📤", "JSON 匯出"),
+    ("🔍", "調查"),
 ]
 
-_STEPPER_LABELS = ["專案設定", "ISO 比對", "JSON 匯出"]
+_STEPPER_LABELS = ["專案設定", "ISO 比對", "JSON 匯出", "調查"]
 
 
-class MainWindow(QMainWindow, PipelineTabMixin, JsonTabMixin):
+class MainWindow(QMainWindow, PipelineTabMixin, JsonTabMixin, InvestigationTabMixin):
     """管線流程工具 v4 主視窗。"""
 
     def __init__(
@@ -93,6 +95,7 @@ class MainWindow(QMainWindow, PipelineTabMixin, JsonTabMixin):
         self._build_page_project()   # Page 0
         self._build_page_iso()       # Page 1
         self._build_page_json()      # Page 2
+        self._build_page_investigation()  # Page 3
         content.addWidget(self.pages, stretch=1)
 
         content.addWidget(self._build_progress_bar())

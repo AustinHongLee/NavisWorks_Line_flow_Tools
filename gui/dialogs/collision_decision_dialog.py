@@ -17,6 +17,8 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from gui.dialogs.identity_inspector_dialog import IdentityInspectorDialog
+
 
 class CollisionDecisionDialog(QDialog):
     """列出 ``NeedsDecision=1`` 的流水號，讓使用者選定 ParentArea。"""
@@ -107,6 +109,9 @@ class CollisionDecisionDialog(QDialog):
         self._lbl_status.setStyleSheet("font-size: 12px; color: #64748B;")
         btn_row.addWidget(self._lbl_status)
         btn_row.addStretch()
+        btn_investigate = QPushButton("在調查頁查看")
+        btn_investigate.clicked.connect(self._open_current_investigation)
+        btn_row.addWidget(btn_investigate)
         btn_cancel = QPushButton("取消")
         btn_cancel.clicked.connect(self.reject)
         btn_row.addWidget(btn_cancel)
@@ -166,6 +171,19 @@ class CollisionDecisionDialog(QDialog):
         self._lbl_status.setText(
             f"已選 {len(self._decisions)} / {len(self._groups)}"
         )
+
+    def _open_current_investigation(self) -> None:
+        if not self._groups:
+            return
+        spool = str(self._groups[self._current_idx].get("spool", "")).strip()
+        paths_getter = getattr(self.parent(), "_get_investigation_paths", None)
+        if callable(paths_getter):
+            dlg = IdentityInspectorDialog(self, paths_getter, spool)
+            dlg.exec()
+            return
+        opener = getattr(self.parent(), "open_identity_inspector", None)
+        if callable(opener):
+            opener(spool)
 
     def get_decisions(self) -> dict[str, str]:
         return dict(self._decisions)

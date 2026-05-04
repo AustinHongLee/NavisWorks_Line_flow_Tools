@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
 )
 
 from gui.dialogs.trace_viewer_dialog import TraceViewerDialog
+from gui.dialogs.identity_inspector_dialog import IdentityInspectorDialog
 
 
 class FuzzyMatchDialog(QDialog):
@@ -209,6 +210,11 @@ class FuzzyMatchDialog(QDialog):
         self._lbl_no_cand.setVisible(False)
         right.addWidget(self._lbl_no_cand)
 
+        self._btn_investigate = QPushButton("在調查頁查看此 ISO")
+        self._btn_investigate.setToolTip("跳到調查頁，查看 First_try / minus_1 / resolved_mapping 脈絡")
+        self._btn_investigate.clicked.connect(self._open_current_investigation)
+        right.addWidget(self._btn_investigate)
+
         mid.addLayout(right, stretch=1)
         root.addLayout(mid, stretch=1)
 
@@ -305,6 +311,22 @@ class FuzzyMatchDialog(QDialog):
             trace_str=trace,
         )
         dlg.exec()
+
+    def _open_current_investigation(self):
+        if not self._unmatched:
+            return
+        item = self._unmatched[self._current_idx]
+        query = str(item.get("iso_line", "")).strip()
+        paths_getter = getattr(self.parent(), "_get_investigation_paths", None)
+        if callable(paths_getter):
+            dlg = IdentityInspectorDialog(self, paths_getter, query)
+            dlg.exec()
+            return
+        opener = getattr(self.parent(), "open_identity_inspector", None)
+        if callable(opener):
+            opener(query)
+            return
+        QMessageBox.information(self, "調查", f"請到調查頁搜尋：{query}")
 
     def _on_iso_row_changed(self, row: int):
         if 0 <= row < len(self._unmatched):
