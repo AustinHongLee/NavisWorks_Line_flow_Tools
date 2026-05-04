@@ -96,7 +96,11 @@ class JsonExporter:
                 raws = CommonUtils.unique_preserve(sub["Raw_3D_PipeCode"].tolist())
                 if not raws:
                     continue
-                entries.append({group_key: key_v, "管線號": raws})
+                entry = {group_key: key_v, "管線號": raws}
+                scope = _build_scope_metadata(sub)
+                if scope:
+                    entry["搜尋範圍"] = scope
+                entries.append(entry)
             return entries
 
         def _build_flat_list(df_src: pd.DataFrame) -> List[dict]:
@@ -106,6 +110,23 @@ class JsonExporter:
             if not raws:
                 return []
             return [{"管線號": r} for r in raws]
+
+        def _build_scope_metadata(df_src: pd.DataFrame) -> dict:
+            """Export optional scope hints for Navisworks-side bounded search."""
+            scope: dict[str, list[str]] = {}
+            for col in ["ScopeRoot", "ParentArea", "PipeNodePath", "PipeNodeLevel"]:
+                if col not in df_src.columns:
+                    continue
+                values = CommonUtils.unique_preserve(
+                    [
+                        str(v).strip()
+                        for v in df_src[col].tolist()
+                        if str(v).strip()
+                    ]
+                )
+                if values:
+                    scope[col] = values
+            return scope
 
         def _truthy_series(series: pd.Series) -> pd.Series:
             return series.astype(str).str.strip().str.lower().isin(
@@ -337,7 +358,11 @@ class JsonExporter:
                         "[Step4_v2] ALL 群組下沒有任何 Raw_3D_PipeCode，有點異常。"
                     )
                     continue
-                merged_entries = [{group_key: "ALL", "管線號": raws_all}]
+                entry = {group_key: "ALL", "管線號": raws_all}
+                scope = _build_scope_metadata(sub)
+                if scope:
+                    entry["搜尋範圍"] = scope
+                merged_entries = [entry]
             else:
                 self._log_print(
                     f"[Step4_v2] 依 group_key='{group_key}' 分組 Raw_3D_PipeCode。"

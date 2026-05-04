@@ -285,7 +285,16 @@ class PipelineRegressionTests(unittest.TestCase):
             self.assertEqual(count, 1)
             with open(os.path.join(d, "selection.json"), encoding="utf-8") as f:
                 data = json.load(f)
-            self.assertEqual(data, [{"流水號": "1", "管線號": ["/A-LINE"]}])
+            self.assertEqual(
+                data,
+                [
+                    {
+                        "流水號": "1",
+                        "管線號": ["/A-LINE"],
+                        "搜尋範圍": {"ParentArea": ["/A"]},
+                    }
+                ],
+            )
 
             count = JsonExporter().export_json_v2(
                 mapping,
@@ -304,9 +313,63 @@ class PipelineRegressionTests(unittest.TestCase):
             self.assertEqual(
                 data,
                 [
-                    {"流水號": "1", "管線號": ["/A-LINE"]},
-                    {"流水號": "2", "管線號": ["/B-LINE-A"]},
+                    {
+                        "流水號": "1",
+                        "管線號": ["/A-LINE"],
+                        "搜尋範圍": {"ParentArea": ["/A"]},
+                    },
+                    {
+                        "流水號": "2",
+                        "管線號": ["/B-LINE-A"],
+                        "搜尋範圍": {"ParentArea": ["/A"]},
+                    },
                 ],
+            )
+
+    def test_json_export_includes_scope_hints_for_navis_import(self):
+        with self._tmpdir() as d:
+            mapping = os.path.join(d, "resolved_mapping.csv")
+            pd.DataFrame(
+                [
+                    {
+                        "Resolved": "1",
+                        "流水號": "16",
+                        "Raw_3D_PipeCode": "/1-S11U-AP-US02",
+                        "ScopeRoot": "CHO_NO_INSU.RVM",
+                        "ParentArea": "/HPS-PIPE",
+                        "PipeNodePath": "HP6.nwd___CHO_NO_INSU.RVM___/HPS___/HPS-PIPE___/1-S11U-AP-US02",
+                        "PipeNodeLevel": "4",
+                    },
+                    {
+                        "Resolved": "1",
+                        "流水號": "16",
+                        "Raw_3D_PipeCode": "/1-S11U-AP-US02/B1",
+                        "ScopeRoot": "CHO_NO_INSU.RVM",
+                        "ParentArea": "/1-S11U-AP-US02",
+                        "PipeNodePath": "HP6.nwd___CHO_NO_INSU.RVM___/HPS___/HPS-PIPE___/1-S11U-AP-US02___/1-S11U-AP-US02/B1",
+                        "PipeNodeLevel": "5",
+                    },
+                ]
+            ).to_csv(mapping, index=False, encoding="utf-8-sig")
+
+            count = JsonExporter().export_json_v2(
+                mapping,
+                [{"name": "scope_selection", "group_key": "流水號", "filters": {}}],
+                out_dir=d,
+            )
+            self.assertEqual(count, 1)
+            with open(os.path.join(d, "scope_selection.json"), encoding="utf-8") as f:
+                data = json.load(f)
+
+            self.assertEqual(data[0]["流水號"], "16")
+            self.assertEqual(
+                data[0]["管線號"],
+                ["/1-S11U-AP-US02", "/1-S11U-AP-US02/B1"],
+            )
+            self.assertEqual(data[0]["搜尋範圍"]["ScopeRoot"], ["CHO_NO_INSU.RVM"])
+            self.assertEqual(
+                data[0]["搜尋範圍"]["ParentArea"],
+                ["/HPS-PIPE", "/1-S11U-AP-US02"],
             )
 
     def test_resolved_mapping_keeps_distinct_pipe_node_paths(self):
