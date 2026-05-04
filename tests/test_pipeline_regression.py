@@ -80,6 +80,28 @@ class PipelineRegressionTests(unittest.TestCase):
         self.assertEqual(pipe["ISO_Match_Key"], "4-S11-P-60338-H50")
         self.assertIn("去末段後命中", pipe["IdentityReason"])
 
+    def test_identity_resolver_accepts_iso_suffix_family(self):
+        known = {"TRIM-6FL216Q-N3-001"}
+        resolver = IdentityResolver(known_iso_keys=known)
+
+        result = resolver.resolve(
+            pd.Series(
+                {
+                    "Path": (
+                        "HP6.nwd___CHO_NO_INSU.RVM___/HPS___/HPS-TRIM"
+                        "___/TRIM-6FL216Q-N3"
+                    ),
+                    "DisplayName": "/TRIM-6FL216Q-N3",
+                    "Level": "4",
+                    "PipelineId": "/TRIM-6FL216Q-N3",
+                }
+            )
+        )
+
+        self.assertEqual(result["Raw_3D_PipeCode"], "/TRIM-6FL216Q-N3")
+        self.assertEqual(result["ISO_Match_Key"], "TRIM-6FL216Q-N3")
+        self.assertIn("ISO 去末段後命中", result["IdentityReason"])
+
     def test_pipeline_extractor_filters_to_iso_lines(self):
         with self._tmpdir() as d:
             iso_path = os.path.join(d, "ISO_LIST.xlsx")
@@ -123,6 +145,76 @@ class PipelineRegressionTests(unittest.TestCase):
             result = pd.read_csv(out_path, dtype=str, encoding="utf-8-sig").fillna("")
             self.assertEqual(n, 1)
             self.assertEqual(result.iloc[0]["ISO_Match_Key"], "1-S11U-AI-00001")
+
+    def test_pipeline_extractor_traces_iso_suffix_family_candidates(self):
+        with self._tmpdir() as d:
+            iso_path = os.path.join(d, "ISO_LIST.xlsx")
+            first_path = os.path.join(d, "First_try.csv")
+            out_path = os.path.join(d, "123_minus_1.csv")
+            trace_path = os.path.join(d, "first_try_trace.csv")
+            candidates_path = os.path.join(d, "candidates.csv")
+
+            pd.DataFrame(
+                [
+                    {"Line num": "/TRIM-6FL216Q-N3-001", "流水號": "284"},
+                ]
+            ).to_excel(
+                iso_path,
+                index=False,
+                sheet_name="DWG NO.ALL",
+                engine="openpyxl",
+            )
+            pd.DataFrame(
+                [
+                    {
+                        "Path": (
+                            "HP6.nwd___CHO_NO_INSU.RVM___/HPS___/HPS-TRIM"
+                            "___/TRIM-6FL216Q-N3"
+                        ),
+                        "DisplayName": "/TRIM-6FL216Q-N3",
+                        "Class": "群組",
+                        "Level": "4",
+                        "PipelineId": "/TRIM-6FL216Q-N3",
+                    },
+                    {
+                        "Path": (
+                            "HP6.nwd___CHO_NO_INSU.RVM___/HPS___/HPS-TRIM"
+                            "___/TRIM-6FL216Q-N3___/TRIM-6FL216Q-N3/B1"
+                        ),
+                        "DisplayName": "/TRIM-6FL216Q-N3/B1",
+                        "Class": "群組",
+                        "Level": "5",
+                        "PipelineId": "/TRIM-6FL216Q-N3/B1",
+                    },
+                ]
+            ).to_csv(first_path, index=False, encoding="utf-8-sig")
+
+            n = PipelineExtractor().build_intermediate(
+                first_path,
+                out_path,
+                scan_mode="full",
+                iso_list_path=iso_path,
+                iso_sheet_name="DWG NO.ALL",
+                pipe_col_override="Line num",
+                write_first_try_trace=True,
+                first_try_trace_path=trace_path,
+                write_candidates=True,
+                candidates_path=candidates_path,
+            )
+
+            result = pd.read_csv(out_path, dtype=str, encoding="utf-8-sig").fillna("")
+            trace = pd.read_csv(trace_path, dtype=str, encoding="utf-8-sig").fillna("")
+            candidates = pd.read_csv(
+                candidates_path,
+                dtype=str,
+                encoding="utf-8-sig",
+            ).fillna("")
+
+            self.assertEqual(n, 2)
+            self.assertEqual(set(result["ISO_Match_Key"]), {"TRIM-6FL216Q-N3"})
+            self.assertTrue((trace["candidate_count"].astype(str) != "0").all())
+            self.assertTrue((trace["included_in_minus_1"].astype(str) == "1").all())
+            self.assertGreaterEqual(len(candidates), 2)
 
     def test_resolved_mapping_blocks_collision_from_json(self):
         with self._tmpdir() as d:

@@ -42,14 +42,15 @@ class IdentityResolver:
         self.sep = sep
         self.raw_prefix = raw_prefix
         self.known_iso_keys: set[str] = set()
+        self.known_iso_drop_last_keys: set[str] = set()
         for key in known_iso_keys or set():
             text = str(key).strip()
             if not text:
                 continue
-            self.known_iso_keys.add(text)
+            self._add_known_iso_key(text)
             norm_v2, _events = normalize_line_v2(text)
             if norm_v2:
-                self.known_iso_keys.add(norm_v2)
+                self._add_known_iso_key(norm_v2)
 
     @staticmethod
     def _as_text(value: Any) -> str:
@@ -76,6 +77,15 @@ class IdentityResolver:
         if len(parts) >= 4:
             return "-".join(parts[:-1])
         return str(value).strip()
+
+    def _add_known_iso_key(self, value: str) -> None:
+        norm = str(value).strip()
+        if not norm:
+            return
+        self.known_iso_keys.add(norm)
+        dropped = self._drop_last_segment(norm)
+        if dropped and dropped != norm:
+            self.known_iso_drop_last_keys.add(dropped)
 
     @staticmethod
     def _trace_source(source: str) -> str:
@@ -124,6 +134,8 @@ class IdentityResolver:
             return True
         if self._drop_last_segment(norm) in self.known_iso_keys:
             return True
+        if norm in self.known_iso_drop_last_keys:
+            return True
         return False
 
     def _clean_raw(self, value: str) -> str:
@@ -162,6 +174,9 @@ class IdentityResolver:
             elif self._drop_last_segment(normalized) in self.known_iso_keys:
                 score += 0.04
                 reason += "；去末段後命中 ISO 管線清單"
+            elif normalized in self.known_iso_drop_last_keys:
+                score += 0.04
+                reason += "；ISO 去末段後命中管線清單"
 
         return IdentityCandidate(
             raw=raw,
