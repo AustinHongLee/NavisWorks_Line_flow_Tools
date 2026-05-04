@@ -16,6 +16,7 @@ from utils.trace_builder import TraceBuilder, append_trace
 from utils.utils_common import CommonUtils, normalize_line_v2
 from utils.iso_schema import detect_schema
 from utils.pipe_parser import load_pipe_pattern, DEFAULT_CONFIG_FILENAME
+from core.size_normalizer import STATUS_MATCHED, is_size_like, normalize_size_token
 
 # ── 尺寸段偵測用 regex ──
 _SIZE_RE = re.compile(r"^\d+([Xx]\d+)?$")
@@ -39,6 +40,62 @@ def _strip_size_segment(line: str) -> str:
 def _compute_similarity(a: str, b: str) -> float:
     """字串相似度 (0~1)。"""
     return SequenceMatcher(None, a.upper(), b.upper()).ratio()
+
+
+def _split_line_parts(line: str) -> list[str]:
+    """切管線號時保留 1-1/2 這類 canonical mixed size。"""
+    clean = _SUPPORTS_RE.sub("", str(line)).strip().upper()
+    if not clean:
+        return []
+
+    raw_parts = [p.strip() for p in clean.split("-") if p.strip()]
+    parts: list[str] = []
+    i = 0
+    while i < len(raw_parts):
+        current = raw_parts[i]
+        if i + 1 < len(raw_parts):
+            combined = f"{current}-{raw_parts[i + 1]}"
+            canonical, _inches, status = normalize_size_token(combined)
+            if status == STATUS_MATCHED:
+                parts.append(canonical.upper())
+                i += 2
+                continue
+        parts.append(current)
+        i += 1
+    return parts
+
+
+def _is_size_part(part: str) -> bool:
+    value = str(part).strip()
+    if not value:
+        return False
+    if _SIZE_RE.match(value):
+        return True
+    return is_size_like(value)
+
+
+def _line_stem(value: str) -> str:
+    """移除 ISO 尾碼字母，讓 20951Q 可召回 20951。"""
+    clean = str(value).strip().upper()
+    if re.search(r"\d[A-Z]$", clean):
+        return clean[:-1]
+    return clean
+
+
+def _semantic_keys(line: str) -> list[str]:
+    seg = _parse_segments(line)
+    system = seg.get("system", "")
+    class_code = seg.get("class", "")
+    line_no = seg.get("line_no", "")
+    stem = _line_stem(line_no)
+    keys: list[str] = []
+    if system and class_code and stem:
+        keys.append(f"SYS_CLASS_STEM:{system}|{class_code}|{stem}")
+    if system and stem:
+        keys.append(f"SYS_STEM:{system}|{stem}")
+    if stem and len(stem) >= 4:
+        keys.append(f"STEM:{stem}")
+    return keys
 
 
 # ── 段位名稱對照 ──
@@ -82,9 +139,22 @@ def _parse_segments(line: str) -> dict[str, str]:
     回傳 ``{"system": ..., "line_no": ..., "size": ..., ...}``。
     """
     clean = _SUPPORTS_RE.sub("", line).strip().upper()
-    parts = clean.split("-")
+    parts = _split_line_parts(clean)
     result: dict[str, str] = {}
-    if len(parts) >= 5 and _SIZE_RE.match(parts[2]):
+    if len(parts) >= 4 and _is_size_part(parts[0]):
+        # CP-129 常見：尺寸-系統-材質/等級-線號，例如 3/4-S11G-N4-20951Q
+        result["size"] = parts[0]
+        result["system"] = parts[1]
+        result["class"] = parts[2]
+        result["line_no"] = "-".join(parts[3:])
+        result["insulation"] = ""
+    elif len(parts) >= 3 and _is_size_part(parts[0]):
+        result["size"] = parts[0]
+        result["system"] = parts[1]
+        result["line_no"] = "-".join(parts[2:])
+        result["class"] = ""
+        result["insulation"] = ""
+    elif len(parts) >= 5 and _SIZE_RE.match(parts[2]):
         # 5 段：系統-編號-尺寸-材質-保溫
         result["system"] = parts[0]
         result["line_no"] = parts[1]
@@ -134,6 +204,14 @@ def _compute_segment_score(iso_line: str, line_3d: str) -> tuple[float, str]:
 
     sys_match = seg_iso["system"] == seg_3d["system"] and seg_iso["system"] != ""
     lineno_match = seg_iso["line_no"] == seg_3d["line_no"] and seg_iso["line_no"] != ""
+    iso_stem = _line_stem(seg_iso["line_no"])
+    d3_stem = _line_stem(seg_3d["line_no"])
+    lineno_stem_match = (
+        not lineno_match
+        and iso_stem
+        and d3_stem
+        and iso_stem == d3_stem
+    )
 
     if sys_match:
         score += _SEG_WEIGHTS["system"]
@@ -141,9 +219,15 @@ def _compute_segment_score(iso_line: str, line_3d: str) -> tuple[float, str]:
     if lineno_match:
         score += _SEG_WEIGHTS["line_no"]
         reasons.append(f"編號={seg_iso['line_no']}")
+    elif lineno_stem_match:
+        score += _SEG_WEIGHTS["line_no"] * 0.8
+        reasons.append(f"編號主體={iso_stem}")
     if sys_match and lineno_match:
         score += _SEG_WEIGHTS["combo"]
         reasons.append("系統+編號同時吻合(+加成)")
+    elif sys_match and lineno_stem_match:
+        score += _SEG_WEIGHTS["combo"] * 0.6
+        reasons.append("系統+編號主體吻合")
 
     # size: 若其中一方缺尺寸段，視為「不懲罰」(給一半權重)
     if seg_iso["size"] and seg_3d["size"]:
@@ -837,21 +921,30 @@ class IsoMatcher:
         iso_still_unmatched = iso_df[~iso_df["__line_norm"].isin(matched_iso_norms)]
         _log(f"Phase4: 尚未配對的 ISO 行 = {len(iso_still_unmatched)}")
 
-        # 建立 prefix→3D 對照表  (system-line_no 前兩段)
+        # 建立多組 3D 索引：舊前綴 + 語意 key，避免尺寸開頭格式讓候選召回變空。
         minus_valid = df_minus[
             df_minus["__line_norm"].str.strip().ne("")
             & df_minus["__line_norm"].str.strip().ne("0")
         ]
+        all_3d_lines = [str(v).strip() for v in minus_valid["__line_norm"].unique() if str(v).strip()]
         prefix_to_3d: Dict[str, List[str]] = {}
-        # 也建立 system→3D 對照表 (僅第一段)，用於 fallback 搜索
         system_to_3d: Dict[str, List[str]] = {}
-        for v in minus_valid["__line_norm"].unique():
-            parts = str(v).split("-")
+        semantic_to_3d: Dict[str, List[str]] = {}
+        stem_to_3d: Dict[str, List[str]] = {}
+        for v in all_3d_lines:
+            parts = _split_line_parts(v)
             if len(parts) >= 2:
                 pfx = "-".join(parts[:2])
                 prefix_to_3d.setdefault(pfx, []).append(v)
-            if len(parts) >= 1 and parts[0]:
-                system_to_3d.setdefault(parts[0].upper(), []).append(v)
+            seg = _parse_segments(v)
+            system = seg.get("system", "").upper()
+            if system:
+                system_to_3d.setdefault(system, []).append(v)
+            stem = _line_stem(seg.get("line_no", ""))
+            if stem and len(stem) >= 4:
+                stem_to_3d.setdefault(stem, []).append(v)
+            for key in _semantic_keys(v):
+                semantic_to_3d.setdefault(key, []).append(v)
 
         # __line_norm → Raw_3D_PipeCode 對照（保留原始 / 前綴，供 apply_fuzzy_selections 還原）
         norm_to_raw: Dict[str, str] = {}
@@ -861,99 +954,146 @@ class IsoMatcher:
             if _n and _r and _n not in norm_to_raw:
                 norm_to_raw[_n] = _r
 
+        def _add_candidate(
+            bucket: list[dict],
+            seen: set[str],
+            iso_line: str,
+            cand_3d: str,
+            source_hint: str = "",
+            min_score: float = 0.0,
+            forced_score: float | None = None,
+            forced_reason: str | None = None,
+        ) -> None:
+            cand_3d = str(cand_3d).strip()
+            if not cand_3d or cand_3d in seen:
+                return
+            stripped_3d = _strip_size_segment(cand_3d)
+            if forced_score is not None and forced_reason is not None:
+                score = forced_score
+                reason = forced_reason
+            elif stripped_3d == iso_line:
+                score = 0.97
+                reason = "去尺寸段完全吻合"
+            else:
+                score, reason = _compute_segment_score(iso_line, cand_3d)
+            if score < min_score:
+                return
+            seen.add(cand_3d)
+            if source_hint and source_hint not in reason:
+                reason = f"{reason}; {source_hint}" if reason else source_hint
+            trace = (
+                TraceBuilder()
+                .add("match", "fuzzy_candidate")
+                .add("iso_key", iso_line)
+                .add("line_3d", cand_3d)
+                .add("raw", norm_to_raw.get(cand_3d, cand_3d))
+                .add("score", f"{score:.2f}")
+                .add("reason", reason)
+                .build()
+            )
+            bucket.append({
+                "line_3d": cand_3d,
+                "raw_3d": norm_to_raw.get(cand_3d, cand_3d),
+                "score": score,
+                "reason": reason,
+                "trace": trace,
+            })
+
         self.fuzzy_unmatched = []
         for _, row in iso_still_unmatched.iterrows():
             iso_line = str(row["__line_norm"]).strip()
             iso_spool = str(row.get("流水號", "")).strip()
             if not iso_line:
                 continue
-            iso_parts = iso_line.split("-")
+            iso_parts = _split_line_parts(iso_line)
             pfx = "-".join(iso_parts[:2]) if len(iso_parts) >= 2 else iso_line
-            iso_system = iso_parts[0].upper() if iso_parts else ""
+            iso_seg = _parse_segments(iso_line)
+            iso_system = iso_seg.get("system", "").upper()
+            iso_stem = _line_stem(iso_seg.get("line_no", ""))
 
             candidates = []
             seen_3d: set[str] = set()
 
-            # ── 第一輪：前綴 (system-line_no) 相同的候選 ──
-            for cand_3d in prefix_to_3d.get(pfx, []):
-                if cand_3d in seen_3d:
-                    continue
-                seen_3d.add(cand_3d)
-                stripped_3d = _strip_size_segment(cand_3d)
-                if stripped_3d == iso_line:
-                    score = 0.97
-                    reason = "去尺寸段完全吻合"
-                else:
-                    score, reason = _compute_segment_score(iso_line, cand_3d)
-                trace = (
-                    TraceBuilder()
-                    .add("match", "fuzzy_candidate")
-                    .add("iso_key", iso_line)
-                    .add("line_3d", cand_3d)
-                    .add("raw", norm_to_raw.get(cand_3d, cand_3d))
-                    .add("score", f"{score:.2f}")
-                    .add("reason", reason)
-                    .build()
-                )
-                candidates.append({
-                    "line_3d": cand_3d,
-                    "raw_3d": norm_to_raw.get(cand_3d, cand_3d),
-                    "score": score,
-                    "reason": reason,
-                    "trace": trace,
-                })
+            # ── 第一輪：語意 key 相同（忽略 leading size，line_no 可去尾碼）──
+            for key in _semantic_keys(iso_line):
+                for cand_3d in semantic_to_3d.get(key, []):
+                    _add_candidate(
+                        candidates,
+                        seen_3d,
+                        iso_line,
+                        cand_3d,
+                        source_hint="語意索引命中",
+                    )
 
-            # ── 第二輪：同系統但不同編號的候選 ──
+            # ── 第二輪：舊前綴 (system-line_no) 相同的候選 ──
+            for cand_3d in prefix_to_3d.get(pfx, []):
+                _add_candidate(
+                    candidates,
+                    seen_3d,
+                    iso_line,
+                    cand_3d,
+                    source_hint="前綴索引命中",
+                )
+
+            # ── 第三輪：同系統但不同編號的候選 ──
             if iso_system and len(candidates) < 5:
                 for cand_3d in system_to_3d.get(iso_system, []):
-                    if cand_3d in seen_3d:
-                        continue
-                    seen_3d.add(cand_3d)
-                    score, reason = _compute_segment_score(iso_line, cand_3d)
-                    if score >= 0.20:
-                        trace = (
-                            TraceBuilder()
-                            .add("match", "fuzzy_candidate")
-                            .add("iso_key", iso_line)
-                            .add("line_3d", cand_3d)
-                            .add("raw", norm_to_raw.get(cand_3d, cand_3d))
-                            .add("score", f"{score:.2f}")
-                            .add("reason", reason)
-                            .build()
-                        )
-                        candidates.append({
-                            "line_3d": cand_3d,
-                            "raw_3d": norm_to_raw.get(cand_3d, cand_3d),
-                            "score": score,
-                            "reason": reason,
-                            "trace": trace,
-                        })
+                    _add_candidate(
+                        candidates,
+                        seen_3d,
+                        iso_line,
+                        cand_3d,
+                        source_hint="同系統候選",
+                        min_score=0.20,
+                    )
 
-            # ── 第三輪：全文搜索（前綴不同的候選）──
+            # ── 第四輪：同 line_no 主體，允許系統/尺寸不同，讓人工看得到可能性 ──
+            if iso_stem and len(iso_stem) >= 4 and len(candidates) < 5:
+                for cand_3d in stem_to_3d.get(iso_stem, []):
+                    _add_candidate(
+                        candidates,
+                        seen_3d,
+                        iso_line,
+                        cand_3d,
+                        source_hint="編號主體候選",
+                        min_score=0.18,
+                    )
+
+            # ── 第五輪：全文搜索（前綴不同的候選）──
             if len(candidates) < 3:
-                for v in minus_valid["__line_norm"].unique():
-                    if v in seen_3d:
-                        continue
-                    score, reason = _compute_segment_score(iso_line, str(v))
-                    if score >= 0.40:
-                        trace = (
-                            TraceBuilder()
-                            .add("match", "fuzzy_candidate")
-                            .add("iso_key", iso_line)
-                            .add("line_3d", str(v))
-                            .add("raw", norm_to_raw.get(str(v), str(v)))
-                            .add("score", f"{score:.2f}")
-                            .add("reason", reason)
-                            .build()
-                        )
-                        candidates.append({
-                            "line_3d": v,
-                            "raw_3d": norm_to_raw.get(str(v), str(v)),
-                            "score": score,
-                            "reason": reason,
-                            "trace": trace,
-                        })
-                        seen_3d.add(v)
+                for v in all_3d_lines:
+                    _add_candidate(
+                        candidates,
+                        seen_3d,
+                        iso_line,
+                        v,
+                        source_hint="全文相似候選",
+                        min_score=0.35,
+                    )
+
+            # ── 最後保底：完全沒有候選時，列出低信心全文相似 top N 供排查 ──
+            if not candidates:
+                fallback_scored: list[tuple[float, str, str]] = []
+                for v in all_3d_lines:
+                    seg_score, seg_reason = _compute_segment_score(iso_line, v)
+                    text_score = _compute_similarity(iso_line, v) * 0.6
+                    score = round(max(seg_score, text_score), 4)
+                    if score >= 0.25:
+                        fallback_scored.append((
+                            score,
+                            v,
+                            f"{seg_reason}; 低信心全文相似候選",
+                        ))
+                fallback_scored.sort(key=lambda item: item[0], reverse=True)
+                for score, v, reason in fallback_scored[:5]:
+                    _add_candidate(
+                        candidates,
+                        seen_3d,
+                        iso_line,
+                        v,
+                        forced_score=score,
+                        forced_reason=reason,
+                    )
 
             candidates.sort(key=lambda c: -c["score"])
             candidates = candidates[:15]  # 保留前 15 筆候選

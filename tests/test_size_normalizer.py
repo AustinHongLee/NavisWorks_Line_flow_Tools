@@ -57,6 +57,21 @@ class NormalizeSizeTokenTests(unittest.TestCase):
     def test_frac_3_8(self):
         self._check("3/8", "3/8", 0.375, STATUS_MATCHED)
 
+    def test_under_frac_1_2(self):
+        self._check("1_2", "1/2", 0.5, STATUS_MATCHED)
+
+    def test_under_frac_3_4(self):
+        self._check("3_4", "3/4", 0.75, STATUS_MATCHED)
+
+    def test_under_frac_1_4(self):
+        self._check("1_4", "1/4", 0.25, STATUS_MATCHED)
+
+    def test_under_glued_11_2(self):
+        self._check("11_2", "1-1/2", 1.5, STATUS_MATCHED)
+
+    def test_under_identifier_not_size(self):
+        self._check("60371_2", "60371_2", None, STATUS_UNKNOWN)
+
     def test_glued_11_2(self):
         self._check("11/2", "1-1/2", 1.5, STATUS_MATCHED)
 
@@ -111,11 +126,11 @@ class NormalizeSizeTokenTests(unittest.TestCase):
 
 class IsSizeLikeTests(unittest.TestCase):
     def test_size_like_true_cases(self):
-        for token in ("100", "1/2", "1 1/2", "1.1_2", "1.5"):
+        for token in ("100", "1/2", "1_2", "3_4", "11_2", "1 1/2", "1.1_2", "1.5"):
             self.assertTrue(is_size_like(token), f"token={token!r}")
 
     def test_size_like_false_cases(self):
-        for token in ("AA1B", "S11UG", "NA", ""):
+        for token in ("AA1B", "S11UG", "NA", "60371_2", ""):
             self.assertFalse(is_size_like(token), f"token={token!r}")
 
     def test_pure_int_is_size_like(self):

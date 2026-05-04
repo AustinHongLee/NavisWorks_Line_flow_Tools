@@ -43,10 +43,12 @@ STATUS_UNKNOWN: Final = "unknown"
 
 _FLOAT_RE: Final = re.compile(r"^\d+\.\d+$")
 _FRACTION_RE: Final = re.compile(r"^(\d+)/(\d+)$")
+_UNDER_FRACTION_RE: Final = re.compile(r"^(\d+)_(\d+)$")
 _MIXED_RE: Final = re.compile(r"^(\d+)[\s\-_.](\d+)/(\d+)$")
 _BUG_DOT_UNDER_RE: Final = re.compile(r"^(\d+)\.(\d+)_(\d+)$")
 _ALPHA_RE: Final = re.compile(r"[A-Za-z]")
 _NUMERIC_RE: Final = re.compile(r"^\d+(\.\d+)?$")
+_COMMON_FRACTION_DENOMINATORS: Final = {2, 4, 8, 16}
 
 
 def _lookup_nps(
@@ -78,6 +80,18 @@ def _fraction_value(num: str, den: str) -> float | None:
     return int(num) / denominator
 
 
+def _glued_mixed_value(num: str, den: str) -> float | None:
+    """解析 11_2 / 21_2 這類少了分隔符的 mixed fraction。"""
+    denominator = int(den)
+    if denominator == 0 or len(num) < 2:
+        return None
+    whole = int(num[:-1])
+    frac_num = int(num[-1:])
+    if frac_num >= denominator:
+        return None
+    return whole + (frac_num / denominator)
+
+
 def normalize_size_token(
     token: str,
     nps_sizes: Optional[dict[float, str]] = None,
@@ -88,7 +102,7 @@ def normalize_size_token(
     inch 分數變體會先解析成數值，再對照 NPS 標準表。
     """
     original = "" if token is None else str(token)
-    value = original.strip()
+    value = original.strip().strip('"')
     sizes = nps_sizes or NPS_SIZES
 
     if not value:
@@ -122,6 +136,27 @@ def normalize_size_token(
 
         return value, frac_value, STATUS_NON_STANDARD
 
+    match = _UNDER_FRACTION_RE.match(value)
+    if match:
+        numerator = match.group(1)
+        denominator = int(match.group(2))
+        if denominator not in _COMMON_FRACTION_DENOMINATORS:
+            return value, None, STATUS_UNKNOWN
+
+        frac_value = _fraction_value(numerator, match.group(2))
+        if frac_value is None:
+            return value, None, STATUS_UNKNOWN
+        if int(numerator) < denominator:
+            return _status_for_value(value, frac_value, sizes)
+
+        glued_value = _glued_mixed_value(numerator, match.group(2))
+        if glued_value is not None:
+            canonical = _lookup_nps(glued_value, sizes)
+            if canonical is not None:
+                return canonical, glued_value, STATUS_MATCHED
+
+        return value, None, STATUS_UNKNOWN
+
     match = _MIXED_RE.match(value)
     if match:
         denominator = int(match.group(3))
@@ -150,6 +185,19 @@ def is_size_like(token: str) -> bool:
         return True
     if _FRACTION_RE.match(value):
         return True
+    match = _UNDER_FRACTION_RE.match(value)
+    if match:
+        denominator = int(match.group(2))
+        if denominator not in _COMMON_FRACTION_DENOMINATORS:
+            return False
+        numerator = int(match.group(1))
+        if numerator < denominator:
+            return True
+        glued_value = _glued_mixed_value(match.group(1), match.group(2))
+        return (
+            glued_value is not None
+            and _lookup_nps(glued_value, NPS_SIZES) is not None
+        )
     if _MIXED_RE.match(value):
         return True
     if _BUG_DOT_UNDER_RE.match(value):

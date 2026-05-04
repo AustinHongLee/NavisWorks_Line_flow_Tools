@@ -21,6 +21,12 @@ class NormalizeLineV2Tests(unittest.TestCase):
     def test_bug_dot_under(self):
         self._check("/1.1_2-S11UG-N4-60371", "1-1/2-S11UG-N4-60371")
 
+    def test_under_fraction_half(self):
+        self._check("/1_2-S11-P-20909T", "1/2-S11-P-20909T")
+
+    def test_under_fraction_three_quarter(self):
+        self._check("/3_4-S11G-N4-20951Q", "3/4-S11G-N4-20951Q")
+
     def test_mixed_space(self):
         self._check("/1 1/2-S11UG-N4-60371", "1-1/2-S11UG-N4-60371")
 
