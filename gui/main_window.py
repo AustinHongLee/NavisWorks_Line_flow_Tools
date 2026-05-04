@@ -333,6 +333,9 @@ class MainWindow(QMainWindow, PipelineTabMixin, JsonTabMixin, InvestigationTabMi
             "minus2_xlsx": os.path.join(base, "123_minus_2.xlsx"),
             "iso_match_xlsx": os.path.join(base, "iso_match.xlsx"),
             "resolved_mapping_csv": os.path.join(base, "resolved_mapping.csv"),
+            "first_try_trace_csv": os.path.join(base, "first_try_trace.csv"),
+            "candidates_csv": os.path.join(base, "candidates.csv"),
+            "identity_index_csv": os.path.join(base, "identity_index.csv"),
         }
 
     def _log(self, msg: str):
@@ -489,7 +492,14 @@ class MainWindow(QMainWindow, PipelineTabMixin, JsonTabMixin, InvestigationTabMi
                     self._log("模糊比對：使用者取消。")
 
             if self.chk_auto_cleanup.isChecked():
-                self._do_cleanup(silent=True)
+                preserve_investigation = (
+                    self.chk_first_try_trace.isChecked()
+                    or self.chk_candidates_trace.isChecked()
+                )
+                self._do_cleanup(
+                    silent=True,
+                    preserve_investigation=preserve_investigation,
+                )
 
             self.lbl_progress.setText(
                 "完成\n\n可至『JSON 匯出 (互動)』分頁輸出 JSON。"
@@ -525,7 +535,11 @@ class MainWindow(QMainWindow, PipelineTabMixin, JsonTabMixin, InvestigationTabMi
         info = "\n".join(lines)
         QMessageBox.information(self, "清理中間檔結果", info)
 
-    def _do_cleanup(self, silent: bool = False) -> tuple[list, list]:
+    def _do_cleanup(
+        self,
+        silent: bool = False,
+        preserve_investigation: bool = False,
+    ) -> tuple[list, list]:
         try:
             cfg = self._get_paths()
         except Exception as e:
@@ -535,13 +549,26 @@ class MainWindow(QMainWindow, PipelineTabMixin, JsonTabMixin, InvestigationTabMi
 
         base = cfg["base_dir"]
         targets = [
-            cfg["minus1_csv"],
             cfg["minus2_csv"],
             cfg["minus2_xlsx"],
             os.path.join(base, "iso_line_coverage.xlsx"),
             os.path.join(base, "minus_line_coverage.xlsx"),
-            cfg["resolved_mapping_csv"],
         ]
+        if preserve_investigation:
+            self._log(
+                "  🔎 已啟用排查輸出，自動清理保留 "
+                "123_minus_1.csv / first_try_trace.csv / candidates.csv / "
+                "identity_index.csv / resolved_mapping.csv"
+            )
+        else:
+            targets.extend(
+                [
+                    cfg["minus1_csv"],
+                    cfg["first_try_trace_csv"],
+                    cfg["candidates_csv"],
+                    cfg["identity_index_csv"],
+                ]
+            )
         deleted = []
         failed = []
         for p in targets:
