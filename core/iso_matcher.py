@@ -13,7 +13,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 import pandas as pd
 
 from utils.trace_builder import TraceBuilder, append_trace
-from utils.utils_common import CommonUtils
+from utils.utils_common import CommonUtils, normalize_line_v2
 from utils.iso_schema import detect_schema
 from utils.pipe_parser import load_pipe_pattern, DEFAULT_CONFIG_FILENAME
 
@@ -192,6 +192,11 @@ def _match_trace_for_row(row: pd.Series) -> str:
     return tb.build()
 
 
+def _normalize_key_with_trace(value: object) -> tuple[str, str]:
+    normalized, events = normalize_line_v2(str(value))
+    return normalized, TraceBuilder().extend_events(events).build()
+
+
 class IsoMatcher:
     def __init__(self):
         # ── 模糊比對候選，Step3 完成後可供 GUI 讀取 ──
@@ -218,7 +223,7 @@ class IsoMatcher:
         """檢查 ISO LIST 每一列管線是否能在 minus_2 的 ISO_Match_Key 中找到家。
 
         - 讀取 123_minus_2.csv（若不存在則退回 123_minus_1.csv）。
-        - 對 minus 的 ISO_Match_Key 與 ISO 的管線欄位都套用 CommonUtils.normalize_line。
+        - 對 minus 的 ISO_Match_Key 與 ISO 的管線欄位都套用 normalize_line_v2。
         - 產出一份 coverage 報表，其中列出：
           - 每列 ISO 的原始管線編號、流水號、標準化 key
           - 是否在 minus 端找到對應 (Matched: 1/0)
@@ -258,7 +263,7 @@ class IsoMatcher:
             )
 
         df_minus["__line_norm"] = df_minus["ISO_Match_Key"].astype(str).apply(
-            CommonUtils.normalize_line
+            lambda value: normalize_line_v2(value)[0]
         )
         minus_set = set(df_minus["__line_norm"].tolist())
 
@@ -299,7 +304,7 @@ class IsoMatcher:
         cov = pd.DataFrame()
         cov["管線編號"] = iso_df[pipe_col].astype(str).str.strip()
         cov["流水號"] = iso_df[spool_col].astype(str).str.strip()
-        cov["line_norm"] = cov["管線編號"].apply(CommonUtils.normalize_line)
+        cov["line_norm"] = cov["管線編號"].apply(lambda value: normalize_line_v2(value)[0])
         cov["Matched"] = cov["line_norm"].apply(
             lambda k: 1 if k and k in minus_set else 0
         )
@@ -328,7 +333,7 @@ class IsoMatcher:
         """檢查 minus_2 的每一條 ISO_Match_Key 是否至少有一列 ISO 管線編號對應。
 
         這是從 3D 身分證的角度看 ISO 覆蓋率：
-        - minus_2 端：使用 ISO_Match_Key → normalize 後成 minus_line_norm。
+        - minus_2 端：使用 ISO_Match_Key → normalize_line_v2 後成 minus_line_norm。
         - ISO 端：使用管線欄位 → normalize 成 iso_line_norm。
         - 若某條 minus_line_norm 不在任何 iso_line_norm 之中，則視為「3D 有、ISO 沒有」。
         """
@@ -366,7 +371,9 @@ class IsoMatcher:
             )
 
         df_minus["ISO_Match_Key"] = df_minus["ISO_Match_Key"].astype(str).str.strip()
-        df_minus["line_norm"] = df_minus["ISO_Match_Key"].apply(CommonUtils.normalize_line)
+        df_minus["line_norm"] = df_minus["ISO_Match_Key"].apply(
+            lambda value: normalize_line_v2(value)[0]
+        )
 
         if iso_list_path:
             iso_path = iso_list_path
@@ -396,7 +403,9 @@ class IsoMatcher:
         pipe_col = schema.pipe_col
 
         iso_df["pipe_raw"] = iso_df[pipe_col].astype(str).str.strip()
-        iso_df["line_norm"] = iso_df["pipe_raw"].apply(CommonUtils.normalize_line)
+        iso_df["line_norm"] = iso_df["pipe_raw"].apply(
+            lambda value: normalize_line_v2(value)[0]
+        )
         iso_set = set(iso_df["line_norm"].tolist())
 
         # 嚴謹比對：完整標準化字串 1:1 覆蓋
@@ -582,9 +591,15 @@ class IsoMatcher:
             if c not in df_minus.columns:
                 df_minus[c] = ""
             df_minus[c] = df_minus[c].astype(str).str.strip()
-        df_minus["__line_norm"] = df_minus["ISO_Match_Key"].apply(
-            CommonUtils.normalize_line
-        )
+        minus_norm_trace = df_minus["ISO_Match_Key"].apply(_normalize_key_with_trace)
+        df_minus["__line_norm"] = minus_norm_trace.apply(lambda item: item[0])
+        df_minus["IdentityReason"] = [
+            append_trace(reason, trace)
+            for reason, trace in zip(
+                df_minus["IdentityReason"].tolist(),
+                minus_norm_trace.apply(lambda item: item[1]).tolist(),
+            )
+        ]
 
         _log("=== run_pipeline Step3 LOG ===")
         _log(f"df_minus rows = {len(df_minus)}")
@@ -669,9 +684,9 @@ class IsoMatcher:
 
         iso_df["__pipe_raw"] = iso_df[pipe_col].astype(str).str.strip()
         iso_df["流水號"] = iso_df[spool_col].astype(str).str.strip()
-        iso_df["__line_norm"] = iso_df["__pipe_raw"].apply(
-            CommonUtils.normalize_line
-        )
+        iso_norm_trace = iso_df["__pipe_raw"].apply(_normalize_key_with_trace)
+        iso_df["__line_norm"] = iso_norm_trace.apply(lambda item: item[0])
+        iso_df["__norm_trace"] = iso_norm_trace.apply(lambda item: item[1])
 
         _log(
             "iso pipe_raw sample (前 5 筆): "
@@ -1182,10 +1197,17 @@ class IsoMatcher:
         _log(f"collision groups needing decision = {needs_count}")
 
         if "IdentityReason" not in merged.columns:
-            merged["IdentityReason"] = ""
+            if "IdentityReason_y" in merged.columns:
+                merged["IdentityReason"] = merged["IdentityReason_y"]
+            elif "IdentityReason_x" in merged.columns:
+                merged["IdentityReason"] = merged["IdentityReason_x"]
+            else:
+                merged["IdentityReason"] = ""
+        if "__norm_trace" not in merged.columns:
+            merged["__norm_trace"] = ""
         merged["IdentityReason"] = merged.apply(
             lambda r: append_trace(
-                r.get("IdentityReason", ""),
+                append_trace(r.get("IdentityReason", ""), r.get("__norm_trace", "")),
                 _match_trace_for_row(r),
             ),
             axis=1,

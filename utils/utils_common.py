@@ -74,6 +74,85 @@ class CommonUtils:
         return s
 
 
+def _as_text(value: object) -> str:
+    if not isinstance(value, str):
+        value = "" if pd.isna(value) else str(value)
+    return str(value)
+
+
+def _strip_segment_prefix(value: str) -> str:
+    return re.sub(r'^[^A-Za-z0-9]+', '', value.strip())
+
+
+def normalize_line(s: str) -> str:
+    """模組層級 v1 wrapper；行為等同 ``CommonUtils.normalize_line``。"""
+    return CommonUtils.normalize_line(s)
+
+
+def normalize_line_v2(
+    s: str,
+    sep: str = "-",
+    apply_size_norm: bool = True,
+) -> tuple[str, list[str]]:
+    """新版 normalize：先切段、size 規範、再 join。
+
+    ``normalize_line`` v1 完全不變；本函式只供新比對流程顯式使用。
+    """
+    raw = _as_text(s).strip()
+    trace_events: list[str] = []
+    if not raw:
+        return "", trace_events
+    from core.size_normalizer import (
+        STATUS_MATCHED,
+        is_size_like,
+        normalize_size_token,
+    )
+
+    parts = raw.split(sep) if sep else [raw]
+    normalized_parts: list[str] = []
+    i = 0
+    while i < len(parts):
+        part = parts[i]
+        cleaned = _strip_segment_prefix(part)
+
+        if apply_size_norm and i + 1 < len(parts):
+            next_cleaned = _strip_segment_prefix(parts[i + 1])
+            combined = f"{cleaned}{sep}{next_cleaned}"
+            if cleaned.isdigit() and re.match(r"^\d+/\d+$", next_cleaned):
+                canonical, _inches, status = normalize_size_token(combined)
+                if status == STATUS_MATCHED:
+                    normalized_parts.append(canonical)
+                    if canonical != combined:
+                        trace_events.append(
+                            f"size_norm[{i}]:{combined}→{canonical}"
+                        )
+                    i += 2
+                    continue
+
+        if apply_size_norm and is_size_like(cleaned):
+            canonical, _inches, status = normalize_size_token(cleaned)
+            if status == STATUS_MATCHED:
+                normalized_parts.append(canonical)
+                if canonical != cleaned:
+                    trace_events.append(f"size_norm[{i}]:{cleaned}→{canonical}")
+            else:
+                normalized_parts.append(cleaned)
+        else:
+            normalized_parts.append(part)
+        i += 1
+
+    normalized = sep.join(normalized_parts) if sep else "".join(normalized_parts)
+    stripped = re.sub(r'^[^A-Za-z0-9]+', '', normalized)
+    if stripped != normalized:
+        trace_events.append(f"strip_prefix={stripped}")
+    normalized = stripped.replace(" ", "")
+    if "/" in normalized and not re.search(r'\d/\d', normalized):
+        before = normalized
+        normalized = normalized.split("/", 1)[0]
+        trace_events.append(f"slash_truncate={before}→{normalized}")
+    return normalized, trace_events
+
+
 PIPE_SEG_PATTERN = re.compile(
     r"(?i)^(?=.*\d)(?=.*-)[A-Z0-9][A-Z0-9\-\"'_/.]*[A-Z0-9\"']$"
 )

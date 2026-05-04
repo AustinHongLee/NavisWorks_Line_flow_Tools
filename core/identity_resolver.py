@@ -9,7 +9,11 @@ from typing import Any
 import pandas as pd
 
 from utils.trace_builder import TraceBuilder
-from utils.utils_common import CommonUtils, PIPE_SEG_PATTERN, STRUCTURAL_KEYWORDS
+from utils.utils_common import (
+    PIPE_SEG_PATTERN,
+    STRUCTURAL_KEYWORDS,
+    normalize_line_v2,
+)
 
 
 _FILE_EXT_RE = re.compile(r"\.[a-zA-Z]{2,4}$")
@@ -23,6 +27,7 @@ class IdentityCandidate:
     source: str
     score: float
     reason: str
+    trace_events: tuple[str, ...] = ()
 
 
 class IdentityResolver:
@@ -36,7 +41,15 @@ class IdentityResolver:
     ):
         self.sep = sep
         self.raw_prefix = raw_prefix
-        self.known_iso_keys = {str(k).strip() for k in (known_iso_keys or set()) if str(k).strip()}
+        self.known_iso_keys: set[str] = set()
+        for key in known_iso_keys or set():
+            text = str(key).strip()
+            if not text:
+                continue
+            self.known_iso_keys.add(text)
+            norm_v2, _events = normalize_line_v2(text)
+            if norm_v2:
+                self.known_iso_keys.add(norm_v2)
 
     @staticmethod
     def _as_text(value: Any) -> str:
@@ -87,6 +100,7 @@ class IdentityResolver:
             tb.add("path", self._as_text(row.get("Path", "")))
         tb.add("level", self._as_text(row.get("Level", "")))
         tb.add("pattern_check", "pass")
+        tb.extend_events(candidate.trace_events)
         tb.add("normalized", candidate.normalized)
         tb.add("score", f"{candidate.score:.2f}")
         tb.add("reason", candidate.reason)
@@ -135,7 +149,7 @@ class IdentityResolver:
             return None
 
         raw = self._clean_raw(raw_value) if add_prefix else raw_value.strip()
-        normalized = CommonUtils.normalize_line(raw)
+        normalized, trace_events = normalize_line_v2(raw)
         if self._is_file_like(normalized) or not self._is_valid_norm(normalized):
             return None
         if not self._is_known_compatible(normalized):
@@ -155,6 +169,7 @@ class IdentityResolver:
             source=source,
             score=round(min(float(score), 1.0), 4),
             reason=reason,
+            trace_events=tuple(trace_events),
         )
 
     def _pipe_phrase_candidates(
