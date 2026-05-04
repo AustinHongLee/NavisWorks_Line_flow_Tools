@@ -11,12 +11,15 @@ from PyQt6.QtWidgets import (
     QHeaderView,
     QLabel,
     QListWidget,
+    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
+    QWidget,
 )
 
+from core.collision_resolver import build_common_decisions
 from gui.dialogs.identity_inspector_dialog import IdentityInspectorDialog
 
 
@@ -99,7 +102,7 @@ class CollisionDecisionDialog(QDialog):
         self._choice_table.horizontalHeader().setSectionResizeMode(
             4, QHeaderView.ResizeMode.Fixed
         )
-        self._choice_table.horizontalHeader().resizeSection(4, 100)
+        self._choice_table.horizontalHeader().resizeSection(4, 180)
         right.addWidget(self._choice_table)
         mid.addLayout(right, stretch=1)
         root.addLayout(mid, stretch=1)
@@ -137,7 +140,11 @@ class CollisionDecisionDialog(QDialog):
             f"流水號 {spool} 目前分散在 {len(choices)} 個 {area_col}"
         )
         self._choice_table.setRowCount(0)
-        selected_area = self._decisions.get(spool, "")
+        selected_decision = self._decisions.get(spool, "")
+        if isinstance(selected_decision, dict):
+            selected_area = str(selected_decision.get("area", ""))
+        else:
+            selected_area = str(selected_decision)
         for choice in choices:
             area = str(choice.get("area", ""))
             label = str(choice.get("label", "")) or area
@@ -154,9 +161,22 @@ class CollisionDecisionDialog(QDialog):
             self._choice_table.setItem(row, 1, QTableWidgetItem(str(choice.get("row_count", 0))))
             self._choice_table.setItem(row, 2, QTableWidgetItem(str(choice.get("raw_count", 0))))
             self._choice_table.setItem(row, 3, QTableWidgetItem(str(choice.get("sample_raw", ""))))
+
+            action_widget = QWidget()
+            action_lay = QHBoxLayout(action_widget)
+            action_lay.setContentsMargins(0, 0, 0, 0)
+            action_lay.setSpacing(4)
             btn = QPushButton("選定")
+            btn.setToolTip("只選定目前這個流水號")
             btn.clicked.connect(lambda checked, a=area: self._choose_area(a))
-            self._choice_table.setCellWidget(row, 4, btn)
+            action_lay.addWidget(btn)
+            btn_all = QPushButton("同值全套")
+            btn_all.setToolTip(f"套用 {area_col}={area} 到所有有此選項的流水號")
+            btn_all.clicked.connect(
+                lambda checked, col=area_col, a=area: self._choose_area_for_all(col, a)
+            )
+            action_lay.addWidget(btn_all)
+            self._choice_table.setCellWidget(row, 4, action_widget)
         self._refresh_status()
 
     def _choose_area(self, area: str) -> None:
@@ -172,6 +192,35 @@ class CollisionDecisionDialog(QDialog):
             if item:
                 item.setText(f"{spool}  ->  {area_col}={area}")
                 item.setForeground(QColor("#059669"))
+        self._load_group(self._current_idx)
+
+    def _choose_area_for_all(self, area_col: str, area: str) -> None:
+        updates = build_common_decisions(self._groups, area_col, area)
+        if not updates:
+            return
+        reply = QMessageBox.question(
+            self,
+            "批次套用決策",
+            (
+                f"將 {area_col}={area} 套用到 {len(updates)} 個流水號。\n\n"
+                "這只會先預選，按「套用決策」後才會寫回檔案。"
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        self._decisions.update(updates)
+        for i, group in enumerate(self._groups):
+            spool = str(group.get("spool", "")).strip()
+            decision = self._decisions.get(spool, {})
+            if isinstance(decision, dict) and str(decision.get("area", "")).strip():
+                item = self._spool_list.item(i)
+                if item:
+                    item.setText(
+                        f"{spool}  ->  {decision.get('area_col')}={decision.get('area')}"
+                    )
+                    item.setForeground(QColor("#059669"))
         self._load_group(self._current_idx)
 
     def _refresh_status(self) -> None:

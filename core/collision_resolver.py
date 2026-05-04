@@ -149,6 +149,33 @@ def load_collision_groups(mapping_path: str) -> list[dict[str, object]]:
     return groups
 
 
+def build_common_decisions(
+    groups: list[dict[str, object]],
+    area_col: str,
+    area: str,
+) -> dict[str, dict[str, str]]:
+    """Build decisions for every pending group that has the same choice."""
+    area_col_key = str(area_col).strip()
+    area_key = str(area).strip()
+    if not area_col_key or not area_key:
+        return {}
+
+    decisions: dict[str, dict[str, str]] = {}
+    for group in groups:
+        if str(group.get("area_col", "")).strip() != area_col_key:
+            continue
+        spool = str(group.get("spool", "")).strip()
+        if not spool:
+            continue
+        choices = group.get("choices", [])
+        if any(str(choice.get("area", "")).strip() == area_key for choice in choices):
+            decisions[spool] = {
+                "area_col": area_col_key,
+                "area": area_key,
+            }
+    return decisions
+
+
 def apply_collision_decisions(
     mapping_path: str,
     decisions: dict[str, object],

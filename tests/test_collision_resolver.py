@@ -7,6 +7,7 @@ import pandas as pd
 
 from core.collision_resolver import (
     apply_collision_decisions,
+    build_common_decisions,
     load_collision_groups,
 )
 
@@ -206,6 +207,37 @@ class CollisionResolverTests(unittest.TestCase):
             self.assertEqual(len(groups), 1)
             self.assertEqual(groups[0]["area_col"], "PipeNodePath")
             self.assertEqual({c["area"] for c in groups[0]["choices"]}, {p1, p2})
+
+    def test_build_common_decisions_for_shared_scope_choice(self):
+        groups = [
+            {
+                "spool": "1",
+                "area_col": "ScopeRoot",
+                "choices": [{"area": "CHO_NO_INSU.RVM"}, {"area": "CHO_INSU.RVM"}],
+            },
+            {
+                "spool": "2",
+                "area_col": "ScopeRoot",
+                "choices": [{"area": "CHO_NO_INSU.RVM"}, {"area": "E2226.RVM"}],
+            },
+            {
+                "spool": "3",
+                "area_col": "ParentArea",
+                "choices": [{"area": "CHO_NO_INSU.RVM"}],
+            },
+        ]
+
+        decisions = build_common_decisions(
+            groups,
+            "ScopeRoot",
+            "CHO_NO_INSU.RVM",
+        )
+
+        self.assertEqual(set(decisions), {"1", "2"})
+        self.assertEqual(
+            decisions["1"],
+            {"area_col": "ScopeRoot", "area": "CHO_NO_INSU.RVM"},
+        )
 
 
 if __name__ == "__main__":
