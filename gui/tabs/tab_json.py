@@ -739,7 +739,15 @@ class JsonTabMixin:
         # 建立可篩選的分類欄位清單（唯一值 < 50）
         _CAT_THRESHOLD = 50
         # 固定欄位一定要出現在選單中
-        _PINNED = ["流水號", "群組"]
+        _PINNED = [
+            "流水號",
+            "群組",
+            "ParentArea",
+            "ScopeRoot",
+            "ResolutionStatus",
+            "Resolved",
+            "NeedsDecision",
+        ]
         cat_cols = [
             c for c in cols
             if df[c].nunique() < _CAT_THRESHOLD or c in _PINNED

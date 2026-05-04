@@ -76,23 +76,6 @@ class JsonExporter:
             raise ValueError("改比對結果缺少必要欄位『Raw_3D_PipeCode』")
         df["Raw_3D_PipeCode"] = df["Raw_3D_PipeCode"].astype(str).str.strip()
 
-        if "Resolved" in df.columns:
-            before = len(df)
-            df = df[df["Resolved"].astype(str).str.strip().isin(["1", "True", "true"])].copy()
-            self._log_print(
-                f"[Step4_v2] 使用 resolved_mapping，只匯出 Resolved=1：{before} -> {len(df)}"
-            )
-        elif "NeedsDecision" in df.columns:
-            before = len(df)
-            df = df[
-                ~df["NeedsDecision"].astype(str).str.strip().isin(
-                    ["1", "True", "true", "yes", "Y", "是"]
-                )
-            ].copy()
-            self._log_print(
-                f"[Step4_v2] 偵測到 collision 欄位，略過 NeedsDecision=1：{before} -> {len(df)}"
-            )
-
         if out_dir is None or not str(out_dir).strip():
             out_dir = (
                 os.path.dirname(os.path.abspath(iso_match_path))
@@ -123,6 +106,83 @@ class JsonExporter:
             if not raws:
                 return []
             return [{"管線號": r} for r in raws]
+
+        def _truthy_series(series: pd.Series) -> pd.Series:
+            return series.astype(str).str.strip().str.lower().isin(
+                ["1", "true", "yes", "y", "是"]
+            )
+
+        def _allow_narrowed_collision(sub_src: pd.DataFrame) -> pd.Series:
+            allowed = pd.Series(False, index=sub_src.index)
+            if "流水號" not in sub_src.columns:
+                return allowed
+            area_col = "ParentArea" if "ParentArea" in sub_src.columns else ""
+            if not area_col and "ScopeRoot" in sub_src.columns:
+                area_col = "ScopeRoot"
+            if not area_col:
+                return allowed
+
+            for _, group in sub_src.groupby("流水號", sort=False):
+                areas = CommonUtils.unique_preserve(
+                    [
+                        str(v).strip()
+                        for v in group[area_col].tolist()
+                        if str(v).strip()
+                    ]
+                )
+                if len(areas) == 1:
+                    allowed.loc[group.index] = True
+            return allowed
+
+        def _filter_json_safe(
+            sub_src: pd.DataFrame,
+            applied_filters: Dict[str, list[str]],
+        ) -> pd.DataFrame:
+            has_scope_filter = any(
+                str(k).strip() in {"ParentArea", "ScopeRoot"}
+                for k in applied_filters.keys()
+            )
+            before = len(sub_src)
+            if "Resolved" in sub_src.columns:
+                resolved_mask = _truthy_series(sub_src["Resolved"])
+                if "ResolutionStatus" in sub_src.columns:
+                    pending_mask = (
+                        sub_src["ResolutionStatus"]
+                        .astype(str)
+                        .str.strip()
+                        .eq("needs_decision")
+                    )
+                else:
+                    pending_mask = pd.Series(False, index=sub_src.index)
+                narrowed_mask = (
+                    pending_mask & _allow_narrowed_collision(sub_src)
+                    if has_scope_filter
+                    else pd.Series(False, index=sub_src.index)
+                )
+                safe = sub_src[resolved_mask | narrowed_mask].copy()
+                self._log_print(
+                    "[Step4_v2] resolved safety filter："
+                    f"{before} -> {len(safe)}"
+                    f"（含已用 ParentArea/ScopeRoot 篩定的 collision {int(narrowed_mask.sum())} 列）"
+                )
+                return safe
+
+            if "NeedsDecision" in sub_src.columns:
+                decision_mask = _truthy_series(sub_src["NeedsDecision"])
+                narrowed_mask = (
+                    decision_mask & _allow_narrowed_collision(sub_src)
+                    if has_scope_filter
+                    else pd.Series(False, index=sub_src.index)
+                )
+                safe = sub_src[(~decision_mask) | narrowed_mask].copy()
+                self._log_print(
+                    "[Step4_v2] collision safety filter："
+                    f"{before} -> {len(safe)}"
+                    f"（含已用 ParentArea/ScopeRoot 篩定的 collision {int(narrowed_mask.sum())} 列）"
+                )
+                return safe
+
+            return sub_src
 
         def _sort_group_entries(entries: List[dict], key_name: str = "群組") -> List[dict]:
             """依分組欄位排序：
@@ -230,6 +290,13 @@ class JsonExporter:
             if sub.empty:
                 self._log_print(
                     "[Step4_v2] case 套用 filters 後沒有任何列，跳過本 case。"
+                )
+                continue
+
+            sub = _filter_json_safe(sub, filters)
+            if sub.empty:
+                self._log_print(
+                    "[Step4_v2] safety filter 後沒有可安全匯出的列，跳過本 case。"
                 )
                 continue
 

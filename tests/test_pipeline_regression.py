@@ -164,6 +164,28 @@ class PipelineRegressionTests(unittest.TestCase):
                 data = json.load(f)
             self.assertEqual(data, [{"流水號": "1", "管線號": ["/A-LINE"]}])
 
+            count = JsonExporter().export_json_v2(
+                mapping,
+                [
+                    {
+                        "name": "selection_a",
+                        "group_key": "流水號",
+                        "filters": {"ParentArea": ["/A"]},
+                    }
+                ],
+                out_dir=d,
+            )
+            self.assertEqual(count, 1)
+            with open(os.path.join(d, "selection_a.json"), encoding="utf-8") as f:
+                data = json.load(f)
+            self.assertEqual(
+                data,
+                [
+                    {"流水號": "1", "管線號": ["/A-LINE"]},
+                    {"流水號": "2", "管線號": ["/B-LINE-A"]},
+                ],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
