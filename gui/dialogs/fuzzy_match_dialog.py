@@ -174,10 +174,10 @@ class FuzzyMatchDialog(QDialog):
         right = QVBoxLayout()
         right.addWidget(QLabel("3D 候選線（命中機率高→低）："))
         self._cand_table = QTableWidget()
-        self._cand_table.setColumnCount(5)
+        self._cand_table.setColumnCount(6)
         self._cand_table.verticalHeader().setVisible(False)
         self._cand_table.setHorizontalHeaderLabels(
-            ["3D Line", "機率", "原因", "追蹤", "操作"]
+            ["3D Line", "機率", "來源", "原因", "追蹤", "操作"]
         )
         self._cand_table.horizontalHeader().setStretchLastSection(False)
         self._cand_table.horizontalHeader().setSectionResizeMode(
@@ -190,13 +190,16 @@ class FuzzyMatchDialog(QDialog):
             2, QHeaderView.ResizeMode.ResizeToContents
         )
         self._cand_table.horizontalHeader().setSectionResizeMode(
-            3, QHeaderView.ResizeMode.Fixed
+            3, QHeaderView.ResizeMode.ResizeToContents
         )
         self._cand_table.horizontalHeader().setSectionResizeMode(
             4, QHeaderView.ResizeMode.Fixed
         )
-        self._cand_table.horizontalHeader().resizeSection(3, 72)
-        self._cand_table.horizontalHeader().resizeSection(4, 80)
+        self._cand_table.horizontalHeader().setSectionResizeMode(
+            5, QHeaderView.ResizeMode.Fixed
+        )
+        self._cand_table.horizontalHeader().resizeSection(4, 72)
+        self._cand_table.horizontalHeader().resizeSection(5, 80)
         self._cand_table.setSelectionBehavior(
             QAbstractItemView.SelectionBehavior.SelectRows
         )
@@ -280,22 +283,53 @@ class FuzzyMatchDialog(QDialog):
                 score_item.setForeground(QColor("#DC2626"))
             self._cand_table.setItem(row_idx, 1, score_item)
             self._cand_table.setItem(
-                row_idx, 2, QTableWidgetItem(cand.get("reason", ""))
+                row_idx, 2, QTableWidgetItem(self._candidate_source_label(cand))
+            )
+            self._cand_table.setItem(
+                row_idx, 3, QTableWidgetItem(cand.get("reason", ""))
             )
             btn_trace = QPushButton("追蹤")
             btn_trace.setCursor(Qt.CursorShape.PointingHandCursor)
             btn_trace.clicked.connect(
                 lambda checked, ii=i: self._show_candidate_trace(ii)
             )
-            self._cand_table.setCellWidget(row_idx, 3, btn_trace)
+            self._cand_table.setCellWidget(row_idx, 4, btn_trace)
             btn = QPushButton("選擇")
             btn.setProperty("class", "btn-select")
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.clicked.connect(
                 lambda checked, ii=i: self._select_candidate(ii)
             )
-            self._cand_table.setCellWidget(row_idx, 4, btn)
+            self._cand_table.setCellWidget(row_idx, 5, btn)
             self._cand_table.setRowHeight(row_idx, 38)
+
+    @staticmethod
+    def _candidate_source_label(cand: dict) -> str:
+        reason = str(cand.get("reason", ""))
+        trace = str(cand.get("trace", ""))
+        if "ISO 反向召回" in reason or "iso_reverse_recall" in trace:
+            return "ISO 反查"
+        if "語意索引" in reason:
+            return "語意索引"
+        if "編號主體" in reason:
+            return "編號主體"
+        if "同系統" in reason:
+            return "同系統"
+        if "全文" in reason:
+            return "全文相似"
+        return "fuzzy"
+
+    def _selection_from_candidate(self, item: dict, cand: dict) -> dict:
+        return {
+            "iso_line": item["iso_line"],
+            "iso_spool": item["iso_spool"],
+            "line_3d": cand["line_3d"],
+            "raw_3d": cand.get("raw_3d", cand["line_3d"]),
+            "score": cand.get("score", ""),
+            "reason": cand.get("reason", ""),
+            "trace": cand.get("trace", ""),
+            "source": self._candidate_source_label(cand),
+        }
 
     def _show_candidate_trace(self, cand_idx: int):
         item = self._unmatched[self._current_idx]
@@ -340,12 +374,7 @@ class FuzzyMatchDialog(QDialog):
         if cand_idx < 0 or cand_idx >= len(cands):
             return
         cand = cands[cand_idx]
-        self._selections.append({
-            "iso_line": item["iso_line"],
-            "iso_spool": item["iso_spool"],
-            "line_3d": cand["line_3d"],
-            "raw_3d": cand.get("raw_3d", cand["line_3d"]),
-        })
+        self._selections.append(self._selection_from_candidate(item, cand))
         list_item = self._iso_list.item(self._current_idx)
         if list_item:
             list_item.setText(list_item.text() + "  ✓ " + cand["line_3d"])
@@ -378,12 +407,9 @@ class FuzzyMatchDialog(QDialog):
                 continue
             cands = item.get("candidates", [])
             if cands and cands[0]["score"] >= 0.9:
-                self._selections.append({
-                    "iso_line": item["iso_line"],
-                    "iso_spool": item["iso_spool"],
-                    "line_3d": cands[0]["line_3d"],
-                    "raw_3d": cands[0].get("raw_3d", cands[0]["line_3d"]),
-                })
+                self._selections.append(
+                    self._selection_from_candidate(item, cands[0])
+                )
                 list_item = self._iso_list.item(idx)
                 if list_item:
                     list_item.setText(

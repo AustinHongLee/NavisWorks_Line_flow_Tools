@@ -1626,7 +1626,9 @@ class IsoMatcher:
         iso_match_path : str
             iso_match.xlsx 完整路徑。
         selections : list[dict]
-            每筆為 ``{"iso_line": str, "iso_spool": str, "line_3d": str}``。
+            每筆至少為 ``{"iso_line": str, "iso_spool": str, "line_3d": str}``。
+            若含 ``score`` / ``reason`` / ``trace`` / ``source``，會一併寫入
+            ``MatchScore``、``IdentityReason`` 與 ``CandidateTrace``。
         log_fn : callable, optional
             日誌回呼。
 
@@ -1655,7 +1657,13 @@ class IsoMatcher:
         cols = list(existing.columns) if len(existing) > 0 else [
             "管線編號", "流水號", "ISO_Match_Key", "Raw_3D_PipeCode", "群組", "MatchType",
         ]
-        for required_col in ["IdentityReason", "CandidateTrace"]:
+        for required_col in [
+            "IdentityReason",
+            "CandidateTrace",
+            "MatchScore",
+            "MatchSource",
+            "ConfidencePrimary",
+        ]:
             if required_col not in cols:
                 cols.append(required_col)
 
@@ -1667,15 +1675,31 @@ class IsoMatcher:
             row["ISO_Match_Key"] = sel.get("line_3d", "")
             row["Raw_3D_PipeCode"] = sel.get("raw_3d") or sel.get("line_3d", "")
             row["MatchType"] = "fuzzy_manual"
-            trace = (
+            try:
+                score_value = float(str(sel.get("score", "")).strip())
+            except Exception:
+                score_value = float(_MATCH_TYPE_SCORES["fuzzy_manual"])
+            score_text = f"{max(0.0, min(score_value, 1.0)):.2f}"
+            reason = str(sel.get("reason", "")).strip() or _MATCH_TYPE_REASONS[
+                "fuzzy_manual"
+            ]
+            source = str(sel.get("source", "")).strip() or "fuzzy_manual"
+            candidate_trace = str(sel.get("trace", "")).strip()
+            row["MatchScore"] = score_text
+            row["ConfidencePrimary"] = score_text
+            row["MatchSource"] = source
+            manual_trace = (
                 TraceBuilder()
                 .add("match", "fuzzy_manual")
-                .add("iso_key", row["ISO_Match_Key"])
+                .add("iso_line", row["管線編號"])
+                .add("line_3d", row["ISO_Match_Key"])
                 .add("raw", row["Raw_3D_PipeCode"])
-                .add("score", _MATCH_TYPE_SCORES["fuzzy_manual"])
-                .add("reason", _MATCH_TYPE_REASONS["fuzzy_manual"])
+                .add("score", score_text)
+                .add("source", source)
+                .add("reason", reason)
                 .build()
             )
+            trace = append_trace(candidate_trace, manual_trace)
             row["IdentityReason"] = trace
             row["CandidateTrace"] = trace
             new_rows.append(row)

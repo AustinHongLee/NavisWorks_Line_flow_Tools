@@ -12,6 +12,7 @@ from core.iso_matcher import (
     _parse_segments,
     _semantic_keys,
 )
+from core.resolved_mapping import build_resolved_mapping
 
 
 class IsoMatcherSemanticFuzzyTests(unittest.TestCase):
@@ -180,6 +181,58 @@ class IsoMatcherSemanticFuzzyTests(unittest.TestCase):
             self.assertEqual(candidates[0]["raw_3d"], "/TRIM-6FL216Q-N3")
             self.assertIn("TRIM", candidates[0]["reason"])
             self.assertLess(candidates[0]["score"], 0.9)
+
+    def test_fuzzy_selection_preserves_candidate_trace_and_user_resolution(self):
+        with tempfile.TemporaryDirectory(prefix="tmp_unit_", dir=os.getcwd()) as tmp:
+            base = Path(tmp)
+            iso_match_path = base / "iso_match.xlsx"
+            mapping_path = base / "resolved_mapping.csv"
+            pd.DataFrame(
+                columns=["管線編號", "流水號", "ISO_Match_Key", "Raw_3D_PipeCode"]
+            ).to_excel(iso_match_path, sheet_name="結果", index=False)
+
+            matcher = IsoMatcher()
+            added = matcher.apply_fuzzy_selections(
+                str(iso_match_path),
+                [
+                    {
+                        "iso_line": "TRIM-6FL216Q-N3-001",
+                        "iso_spool": "284",
+                        "line_3d": "TRIM-6FL216Q-N3",
+                        "raw_3d": "/TRIM-6FL216Q-N3",
+                        "score": 0.82,
+                        "source": "ISO 反查",
+                        "reason": "PipelineId 命中 ISO 變體 TRIM-6FL216Q-N3",
+                        "trace": "§candidate_kind=iso_reverse_recall",
+                    }
+                ],
+            )
+
+            self.assertEqual(added, 1)
+            result = pd.read_excel(
+                iso_match_path,
+                sheet_name="結果",
+                dtype=str,
+                engine="openpyxl",
+            ).fillna("")
+            row = result.iloc[-1]
+            self.assertEqual(row["MatchScore"], "0.82")
+            self.assertEqual(row["ConfidencePrimary"], "0.82")
+            self.assertEqual(row["MatchSource"], "ISO 反查")
+            self.assertIn("candidate_kind=iso_reverse_recall", row["CandidateTrace"])
+            self.assertIn("match=fuzzy_manual", row["IdentityReason"])
+            self.assertIn("PipelineId 命中", row["IdentityReason"])
+
+            build_resolved_mapping(str(iso_match_path), str(mapping_path))
+            mapping = pd.read_csv(
+                mapping_path,
+                dtype=str,
+                encoding="utf-8-sig",
+            ).fillna("")
+            mapped = mapping[mapping["流水號"].astype(str).eq("284")].iloc[0]
+            self.assertEqual(mapped["Resolved"], "1")
+            self.assertEqual(mapped["ResolvedBy"], "user")
+            self.assertEqual(mapped["MatchScore"], "0.82")
 
 
 if __name__ == "__main__":

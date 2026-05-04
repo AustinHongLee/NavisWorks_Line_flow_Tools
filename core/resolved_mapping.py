@@ -66,14 +66,25 @@ def _truthy(value: object) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "y", "是"}
 
 
-def _score_match(match_type: object, confidence: object) -> float:
+def _to_float(value: object) -> float:
+    try:
+        return float(str(value).strip())
+    except Exception:
+        return 0.0
+
+
+def _score_match(
+    match_type: object,
+    confidence: object,
+    explicit_score: object = "",
+) -> float:
+    explicit = _to_float(explicit_score)
+    if explicit > 0:
+        return explicit
     mt = str(match_type).strip()
     if mt in MATCH_TYPE_SCORES:
         return MATCH_TYPE_SCORES[mt]
-    try:
-        return float(str(confidence).strip())
-    except Exception:
-        return 0.0
+    return _to_float(confidence)
 
 
 def build_resolved_mapping(
@@ -108,7 +119,11 @@ def build_resolved_mapping(
     df["Raw_3D_PipeCode"] = df["Raw_3D_PipeCode"].astype(str).str.strip()
     df["NeedsDecision"] = df["NeedsDecision"].astype(str).str.strip()
     df["MatchScore"] = df.apply(
-        lambda r: _score_match(r.get("MatchType", ""), r.get("ConfidencePrimary", "")),
+        lambda r: _score_match(
+            r.get("MatchType", ""),
+            r.get("ConfidencePrimary", ""),
+            r.get("MatchScore", ""),
+        ),
         axis=1,
     )
 
@@ -134,7 +149,15 @@ def build_resolved_mapping(
     df["ResolutionStatus"] = statuses
     df["ResolutionReason"] = reasons
     df["ResolvedAt"] = now
-    df["ResolvedBy"] = df["Resolved"].apply(lambda v: "auto" if int(v) == 1 else "")
+    df["ResolvedBy"] = df.apply(
+        lambda r: (
+            "user"
+            if int(r.get("Resolved", 0)) == 1
+            and str(r.get("MatchType", "")).strip() == "fuzzy_manual"
+            else ("auto" if int(r.get("Resolved", 0)) == 1 else "")
+        ),
+        axis=1,
+    )
 
     result = df[OUTPUT_COLUMNS].drop_duplicates(
         subset=[
