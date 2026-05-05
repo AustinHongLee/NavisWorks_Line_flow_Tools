@@ -463,6 +463,61 @@ class PipelineRegressionTests(unittest.TestCase):
         self.assertEqual(result.pipe_count, 1)
         self.assertEqual(result.group_count, 1)
 
+    def test_json_export_defaults_to_group_column_when_present(self):
+        df = pd.DataFrame(
+            [
+                {
+                    "Resolved": "1",
+                    "流水號": "1",
+                    "群組": "流水號1_流水號2",
+                    "Raw_3D_PipeCode": "/LINE-A",
+                },
+                {
+                    "Resolved": "1",
+                    "流水號": "2",
+                    "群組": "流水號1_流水號2",
+                    "Raw_3D_PipeCode": "/LINE-B",
+                },
+            ]
+        )
+
+        result = JsonExporter().build_case_result(
+            df,
+            {"name": "selection", "filters": {}},
+        )
+
+        self.assertEqual(result.group_key, "群組")
+        self.assertEqual(result.group_count, 1)
+        self.assertEqual(
+            result.entries,
+            [
+                {
+                    "群組": "流水號1_流水號2",
+                    "管線號": ["/LINE-A", "/LINE-B"],
+                }
+            ],
+        )
+
+    def test_json_export_defaults_to_serial_when_group_column_is_empty(self):
+        df = pd.DataFrame(
+            [
+                {
+                    "Resolved": "1",
+                    "流水號": "1",
+                    "群組": None,
+                    "Raw_3D_PipeCode": "/LINE-A",
+                },
+            ]
+        )
+
+        result = JsonExporter().build_case_result(
+            df,
+            {"name": "selection", "filters": {}},
+        )
+
+        self.assertEqual(result.group_key, "流水號")
+        self.assertEqual(result.entries[0]["流水號"], "1")
+
     def test_resolved_mapping_preserves_iso_source_classification_columns(self):
         with self._tmpdir() as d:
             iso_match = os.path.join(d, "iso_match.xlsx")

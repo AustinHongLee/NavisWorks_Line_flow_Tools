@@ -235,11 +235,18 @@ class JsonExporter:
         group_key = str(group_key or "").strip()
         if group_key:
             return group_key
+        if self.column_has_values(df_src, "群組"):
+            return "群組"
         if "流水號" in df_src.columns:
             return "流水號"
-        if "群組" in df_src.columns:
-            return "群組"
         return "__ALL__"
+
+    @staticmethod
+    def column_has_values(df_src: pd.DataFrame, column: str) -> bool:
+        if column not in df_src.columns:
+            return False
+        values = df_src[column].fillna("").astype(str).str.strip()
+        return bool(values.ne("").any())
 
     @staticmethod
     def output_mode_label(group_key: str) -> str:

@@ -444,7 +444,7 @@ class JsonTabMixin:
         self._v2_cbo_group_key.setFixedWidth(150)
         self._v2_cbo_group_key.setToolTip(
             "JSON 輸出時依此欄位分組\n"
-            "預設「群組」，可改為尺寸、系統等\n"
+            "有群組值時預設「群組」，否則預設「流水號」\n"
             "選「— 不分組（平面清單）」則純列出 Raw_3D_PipeCode"
         )
         self._v2_cbo_group_key.currentIndexChanged.connect(
@@ -500,7 +500,8 @@ class JsonTabMixin:
             "下方統計會顯示被擋數量。</p>"
             "<p style='margin:0 0 5px;'>"
             "<b>3. 分組依據</b><br>"
-            "通常用 <b>流水號</b>，輸出成每個流水號一包管線號。</p>"
+            "<b>群組</b> 是資料欄位，不是額外模式；若同一 item 包含多個流水號，"
+            "預設用群組合併匯出。沒有群組時才退回流水號。</p>"
             "<p style='margin:0;'>"
             "<b>4. 搜尋範圍</b><br>"
             "若資料有 PipeNodePath / ParentArea，JSON 會逐管線輸出 scope，"
@@ -812,10 +813,12 @@ class JsonTabMixin:
         self._v2_cbo_group_key.clear()
         self._v2_cbo_group_key.addItem("— 不分組（平面清單）")
         self._v2_cbo_group_key.addItems(cat_cols)
-        # resolved mapping 預設以流水號（圖號）分組，舊資料退回群組。
-        if "Resolved" in cols and "流水號" in cat_cols:
-            self._v2_cbo_group_key.setCurrentText("流水號")
-        elif "群組" in cat_cols:
+        # 群組只是 resolved_mapping 中的普通欄位；有值時代表多個流水號要合併輸出。
+        has_group_values = (
+            "群組" in df.columns
+            and df["群組"].fillna("").astype(str).str.strip().ne("").any()
+        )
+        if has_group_values and "群組" in cat_cols:
             self._v2_cbo_group_key.setCurrentText("群組")
         elif "流水號" in cat_cols:
             self._v2_cbo_group_key.setCurrentText("流水號")
