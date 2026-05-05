@@ -392,6 +392,77 @@ class PipelineRegressionTests(unittest.TestCase):
                 ],
             )
 
+    def test_json_export_flat_mode_uses_schema_consistent_pipe_arrays(self):
+        with self._tmpdir() as d:
+            mapping = os.path.join(d, "resolved_mapping.csv")
+            pd.DataFrame(
+                [
+                    {
+                        "Resolved": "1",
+                        "流水號": "16",
+                        "Raw_3D_PipeCode": "/1-S11U-AP-US02",
+                        "ScopeRoot": "CHO_NO_INSU.RVM",
+                        "ParentArea": "/HPS-PIPE",
+                        "PipeNodePath": "HP6.nwd___CHO_NO_INSU.RVM___/HPS___/HPS-PIPE___/1-S11U-AP-US02",
+                        "PipeNodeLevel": "4",
+                    },
+                ]
+            ).to_csv(mapping, index=False, encoding="utf-8-sig")
+
+            count = JsonExporter().export_json_v2(
+                mapping,
+                [{"name": "flat_selection", "group_key": "__FLAT__", "filters": {}}],
+                out_dir=d,
+            )
+            self.assertEqual(count, 1)
+            with open(os.path.join(d, "flat_selection.json"), encoding="utf-8") as f:
+                data = json.load(f)
+
+            self.assertEqual(
+                data,
+                [
+                    {
+                        "管線號": ["/1-S11U-AP-US02"],
+                        "搜尋範圍": [
+                            {
+                                "管線號": "/1-S11U-AP-US02",
+                                "ScopeRoot": "CHO_NO_INSU.RVM",
+                                "ParentArea": "/HPS-PIPE",
+                                "PipeNodePath": "HP6.nwd___CHO_NO_INSU.RVM___/HPS___/HPS-PIPE___/1-S11U-AP-US02",
+                                "PipeNodeLevel": 4,
+                            }
+                        ],
+                    }
+                ],
+            )
+
+    def test_json_export_case_result_reports_safety_blocks(self):
+        df = pd.DataFrame(
+            [
+                {
+                    "Resolved": "1",
+                    "流水號": "1",
+                    "Raw_3D_PipeCode": "/OK",
+                },
+                {
+                    "Resolved": "0",
+                    "ResolutionStatus": "needs_decision",
+                    "流水號": "2",
+                    "Raw_3D_PipeCode": "/PENDING",
+                },
+            ]
+        )
+        result = JsonExporter().build_case_result(
+            df,
+            {"name": "selection", "group_key": "流水號", "filters": {}},
+        )
+
+        self.assertEqual(result.filtered_rows, 2)
+        self.assertEqual(result.export_rows, 1)
+        self.assertEqual(result.blocked_rows, 1)
+        self.assertEqual(result.pipe_count, 1)
+        self.assertEqual(result.group_count, 1)
+
     def test_resolved_mapping_keeps_distinct_pipe_node_paths(self):
         with self._tmpdir() as d:
             iso_match = os.path.join(d, "iso_match.xlsx")

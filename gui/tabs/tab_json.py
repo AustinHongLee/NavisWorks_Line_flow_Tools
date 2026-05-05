@@ -488,48 +488,23 @@ class JsonTabMixin:
         )
         help_browser.setHtml(
             '<div style="font-family: Microsoft JhengHei, sans-serif;'
-            ' line-height: 1.6; font-size: 12px; color: #1E293B;">'
-            #
+            ' line-height:1.58; font-size:12px; color:#1E293B;">'
             '<p style="margin:0 0 6px; font-size:13px;'
-            ' font-weight:700; color:#92400E;">'
-            "📖 操作說明</p>"
-            #
-            "<p style='margin:0 0 4px;'>"
-            "<b>① 母篩選</b>（＝分組依據 / 資料夾名稱）<br>"
-            "&nbsp;&nbsp;選擇欄位 → 點『選擇值』→ "
-            "勾選要保留的值。<br>"
-            "&nbsp;&nbsp;範例：母篩選＝<b>群組</b>，"
-            "勾 AC、AD → 只留這 2 組。<br>"
-            "&nbsp;&nbsp;匯出時會以<b>母篩選欄位</b>"
-            "做為 JSON 分組 key。</p>"
-            #
-            "<p style='margin:0 0 4px;'>"
-            "<b>② 篩選 2 / 篩選 3</b>（加碼條件）<br>"
-            "&nbsp;&nbsp;在母篩選基礎上再交叉篩選。<br>"
-            "&nbsp;&nbsp;範例：篩選 2＝<b>系統</b>，"
-            "勾「一次側」→ 只要 AC+AD 且是一次側。</p>"
-            #
-            "<p style='margin:0 0 4px;'>"
-            "<b>③ 表格預覽</b><br>"
-            "┌──────┬──────┬─────┬──────────┐<br>"
-            "│ 流水號 │ 群組 │ 篩選欄 │ Raw_3D_PipeCode │<br>"
-            "└──────┴──────┴─────┴──────────┘<br>"
-            "&nbsp;&nbsp;固定顯示：流水號、群組 → "
-            "中間放篩選欄 → 最右是 Raw_3D_PipeCode</p>"
-            #
-            "<p style='margin:0 0 4px;'>"
-            "<b>④ 匯出 JSON</b><br>"
-            "&nbsp;&nbsp;檔名可自訂（預設依篩選欄自動命名）。<br>"
-            "&nbsp;&nbsp;輸出格式：<br>"
-            '<span style="font-family: Consolas, monospace;'
-            ' font-size: 11px; color: #0369A1;">'
-            "&nbsp;&nbsp;[{&quot;群組&quot;:&quot;AC&quot;,"
-            " &quot;管線號&quot;:[&quot;/AC-001&quot;,...]}]"
-            "</span></p>"
-            #
-            "<p style='margin:0 0 0; color:#6B7280;'>"
-            "💡 母篩選未選時，預設以「群組」分組。<br>"
-            "💡 點「✕ 重設全部」可一鍵清空所有篩選。</p>"
+            ' font-weight:700; color:#92400E;">輸出規則</p>'
+            "<p style='margin:0 0 5px;'>"
+            "<b>1. 篩選</b><br>"
+            "只決定哪些列進入匯出候選。</p>"
+            "<p style='margin:0 0 5px;'>"
+            "<b>2. 安全檢查</b><br>"
+            "未 resolved 或仍需 collision 決策的列會被擋下；"
+            "下方統計會顯示被擋數量。</p>"
+            "<p style='margin:0 0 5px;'>"
+            "<b>3. 分組依據</b><br>"
+            "通常用 <b>流水號</b>，輸出成每個流水號一包管線號。</p>"
+            "<p style='margin:0;'>"
+            "<b>4. 搜尋範圍</b><br>"
+            "若資料有 PipeNodePath / ParentArea，JSON 會逐管線輸出 scope，"
+            "供 Navisworks 匯入端限制搜尋範圍。</p>"
             "</div>"
         )
         help_browser.setFixedWidth(310)
@@ -867,9 +842,7 @@ class JsonTabMixin:
         self._refresh_preview_table()
         self._v2_update_live_count()
 
-        self.v2_status_label.setText(
-            "✓ 已載入，選擇篩選欄位後點擊『選擇值』"
-        )
+        self.v2_status_label.setText("✓ 已載入，預覽表格只顯示實際可匯出的列")
         self.v2_status_label.setStyleSheet(
             f"color: {C_SUCCESS}; font-size: 11px;"
         )
@@ -1033,13 +1006,36 @@ class JsonTabMixin:
             sub = sub[sub[col].astype(str).str.strip().isin(clean)]
         return sub
 
+    def _current_group_key(self) -> str:
+        """Return the exporter group key sentinel/column for the current UI."""
+        gk_text = self._v2_cbo_group_key.currentText().strip()
+        if gk_text.startswith("—") or not gk_text:
+            return "__FLAT__"
+        return gk_text
+
+    def _build_current_export_result(self, name: str = "preview"):
+        """Run the same planner used by file export without writing a file."""
+        if self._v2_iso_df is None:
+            return None
+        from core.json_exporter import JsonExporter
+
+        return JsonExporter().build_case_result(
+            self._v2_iso_df,
+            {
+                "name": name,
+                "group_key": self._current_group_key(),
+                "filters": dict(self._v2_live_filters),
+            },
+        )
+
     def _refresh_preview_table(self):
         """刷新資料預覽表格內容。"""
-        sub = self._get_filtered_df()
-        if sub is None or len(sub) == 0:
+        result = self._build_current_export_result()
+        if result is None or result.export_rows == 0:
             self._v2_table.setRowCount(0)
             self._v2_table.setColumnCount(0)
             return
+        sub = result.export_df
 
         cols = [
             c for c in self._get_display_columns()
@@ -1126,33 +1122,57 @@ class JsonTabMixin:
             self._v2_lbl_count.setText("尚未載入")
             return
 
-        total = len(self._v2_iso_df)
-        sub = self._get_filtered_df()
-        filtered = len(sub) if sub is not None else total
+        result = self._build_current_export_result()
+        if result is None:
+            self._v2_lbl_count.setText("尚未載入")
+            return
 
-        if not self._v2_live_filters:
-            self._v2_lbl_count.setText(f"全部 {total} 列")
-            self._v2_lbl_count.setStyleSheet(
-                "font-size: 12px; font-weight: 600;"
-                " color: #64748B;"
-            )
-        elif filtered == 0:
-            self._v2_lbl_count.setText("⚠ 0 列符合")
+        if result.filtered_rows == 0:
+            self._v2_lbl_count.setText(f"⚠ 0 / {result.source_rows} 列符合")
             self._v2_lbl_count.setStyleSheet(
                 "font-size: 12px; font-weight: 600;"
                 f" color: {C_ERROR};"
             )
-        else:
-            raw_info = ""
-            if sub is not None and "Raw_3D_PipeCode" in sub.columns:
-                raw_n = sub["Raw_3D_PipeCode"].nunique()
-                raw_info = f"（{raw_n} 筆管線）"
+            return
+
+        if result.export_rows == 0:
             self._v2_lbl_count.setText(
-                f"✓ {filtered} / {total} 列{raw_info}"
+                f"⚠ 0 列可匯出（已擋 {result.blocked_rows} 列）"
             )
             self._v2_lbl_count.setStyleSheet(
                 "font-size: 12px; font-weight: 600;"
-                f" color: {C_SUCCESS};"
+                f" color: {C_ERROR};"
+            )
+            return
+
+        parts = [
+            f"✓ 可匯出 {result.export_rows} / {result.source_rows} 列",
+            f"{result.pipe_count} 筆管線",
+            f"{result.group_count} 組 JSON",
+        ]
+        if result.scope_count:
+            parts.append(f"{result.scope_count} 筆 scope")
+        if result.blocked_rows:
+            parts.append(f"已擋 {result.blocked_rows} 列")
+
+        self._v2_lbl_count.setText("  |  ".join(parts))
+        self._v2_lbl_count.setStyleSheet(
+            "font-size: 12px; font-weight: 600;"
+            f" color: {C_SUCCESS};"
+        )
+        if result.blocked_rows:
+            self.v2_status_label.setText(
+                "預覽已套用安全檢查，待決策/未 resolved 的列不會出現在 JSON。"
+            )
+            self.v2_status_label.setStyleSheet(
+                "color: #D97706; font-size: 11px; font-weight: 600;"
+            )
+        else:
+            self.v2_status_label.setText(
+                f"輸出模式：{result.output_mode}，分組依據：{result.group_key}"
+            )
+            self.v2_status_label.setStyleSheet(
+                "color: #475569; font-size: 11px;"
             )
 
     def _v2_update_filename(self):
@@ -1186,14 +1206,24 @@ class JsonTabMixin:
             )
             return
 
-        # 確認至少有結果
-        sub = self._get_filtered_df()
-        if sub is None or len(sub) == 0:
+        # 確認至少有可匯出的結果；這裡和預覽表格使用同一套規則。
+        result = self._build_current_export_result(
+            self.v2_txt_filename.text().strip() or "live_selection"
+        )
+        if result is None or result.filtered_rows == 0:
             QMessageBox.warning(
                 self,
                 "篩選結果為空",
                 "目前篩選條件沒有任何資料。\n"
                 "請調整篩選欄位後再匯出。",
+            )
+            return
+        if result.export_rows == 0:
+            QMessageBox.warning(
+                self,
+                "沒有可安全匯出的資料",
+                "目前符合篩選的資料都尚未 resolved 或仍需 collision 決策。\n"
+                "請先處理衝突，或調整篩選範圍。",
             )
             return
 
@@ -1212,12 +1242,7 @@ class JsonTabMixin:
         name = self.v2_txt_filename.text().strip() or "live_selection"
         filters = dict(self._v2_live_filters)
 
-        # group_key 從「分組依據」下拉取得
-        gk_text = self._v2_cbo_group_key.currentText().strip()
-        if gk_text.startswith("—") or not gk_text:
-            group_key = "__FLAT__"  # 不分組
-        else:
-            group_key = gk_text
+        group_key = self._current_group_key()
 
         from utils.utils_common import FileLogger
 
