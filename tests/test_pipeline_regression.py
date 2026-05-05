@@ -289,7 +289,7 @@ class PipelineRegressionTests(unittest.TestCase):
                 data,
                 [
                     {
-                        "流水號": "1",
+                        "群組": "1",
                         "管線號": ["/A-LINE"],
                         "搜尋範圍": [
                             {"管線號": "/A-LINE", "ParentArea": "/A"}
@@ -316,14 +316,14 @@ class PipelineRegressionTests(unittest.TestCase):
                 data,
                 [
                     {
-                        "流水號": "1",
+                        "群組": "1",
                         "管線號": ["/A-LINE"],
                         "搜尋範圍": [
                             {"管線號": "/A-LINE", "ParentArea": "/A"}
                         ],
                     },
                     {
-                        "流水號": "2",
+                        "群組": "2",
                         "管線號": ["/B-LINE-A"],
                         "搜尋範圍": [
                             {"管線號": "/B-LINE-A", "ParentArea": "/A"}
@@ -367,7 +367,7 @@ class PipelineRegressionTests(unittest.TestCase):
             with open(os.path.join(d, "scope_selection.json"), encoding="utf-8") as f:
                 data = json.load(f)
 
-            self.assertEqual(data[0]["流水號"], "16")
+            self.assertEqual(data[0]["群組"], "16")
             self.assertEqual(
                 data[0]["管線號"],
                 ["/1-S11U-AP-US02", "/1-S11U-AP-US02/B1"],
@@ -516,7 +516,7 @@ class PipelineRegressionTests(unittest.TestCase):
         )
 
         self.assertEqual(result.group_key, "流水號")
-        self.assertEqual(result.entries[0]["流水號"], "1")
+        self.assertEqual(result.entries[0]["群組"], "1")
 
     def test_json_export_group_summary_counts_classification_column(self):
         df = pd.DataFrame(
@@ -558,6 +558,8 @@ class PipelineRegressionTests(unittest.TestCase):
 
         self.assertEqual(result.group_key, "系統")
         self.assertEqual(result.group_count, 2)
+        self.assertEqual(result.entries[0]["群組"], "AI")
+        self.assertNotIn("系統", result.entries[0])
         summaries = {row["系統"]: row for row in result.group_summaries}
         self.assertEqual(summaries["AI"]["3D身分證數"], 1)
         self.assertEqual(summaries["AI"]["流水號數"], 2)

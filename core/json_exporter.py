@@ -283,12 +283,14 @@ class JsonExporter:
             raws = CommonUtils.unique_preserve(sub["Raw_3D_PipeCode"].tolist())
             if not raws:
                 continue
-            entry = {group_key: key_v, "管線號": raws}
+            # Navisworks importer treats "群組" as the stable selection-set name
+            # field. The selected group_key decides the value, not the JSON key.
+            entry = {"群組": key_v, "管線號": raws}
             scope = self.build_scope_metadata(sub, raws)
             if scope:
                 entry["搜尋範圍"] = scope
             entries.append(entry)
-        return self.sort_group_entries(entries, key_name=group_key)
+        return self.sort_group_entries(entries, key_name="群組")
 
     def build_group_summaries(self, df_src: pd.DataFrame, group_key: str) -> List[dict]:
         if df_src.empty or group_key in ("__FLAT__", "__ALL__"):
@@ -335,7 +337,7 @@ class JsonExporter:
         raws = CommonUtils.unique_preserve(df_src["Raw_3D_PipeCode"].tolist())
         if not raws:
             return []
-        entry = {"__ALL__": "ALL", "管線號": raws}
+        entry = {"群組": "ALL", "管線號": raws}
         scope = self.build_scope_metadata(df_src, raws)
         if scope:
             entry["搜尋範圍"] = scope

@@ -35,7 +35,7 @@ Current JSON shape:
 ```json
 [
   {
-    "系統": "AI",
+    "群組": "AI",
     "管線號": ["/1-S11U-AI-00001"],
     "搜尋範圍": [
       {
@@ -55,6 +55,7 @@ Current behavior:
 - The page loads `resolved_mapping.csv` or falls back to `iso_match.xlsx`.
 - Users can add up to 3 Excel-like filters.
 - Users choose "分組依據" from available columns.
+- JSON output always uses the stable top-level field `群組` for the selection-set name. If `分組依據 = 系統`, the output is still `"群組": "AI"`, not `"系統": "AI"`.
 - If grouping by `系統`, the preview now shows summary rows like `系統`, `3D身分證數`, `流水號數`, `Scope數`, `Root數`, `ParentArea數`, `範例管線號`.
 - If grouping by `流水號` or `群組`, the same grouping machinery is used.
 - Safety filter blocks unresolved rows and unresolved collision rows unless scope narrowing makes them safe.
