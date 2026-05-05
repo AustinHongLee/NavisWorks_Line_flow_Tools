@@ -34,6 +34,8 @@ class JsonExportCaseResult:
     filtered_df: pd.DataFrame = field(repr=False)
     export_df: pd.DataFrame = field(repr=False)
     group_summaries: List[dict] = field(default_factory=list)
+    blocked_breakdown: Dict[str, int] = field(default_factory=dict)
+    scope_coverage: Dict[str, dict] = field(default_factory=dict)
 
 
 class JsonExporter:
@@ -120,14 +122,27 @@ class JsonExporter:
                 entries=[],
                 filtered_df=filtered_df,
                 export_df=filtered_df,
+                blocked_breakdown={
+                    "unresolved": 0,
+                    "needs_decision": 0,
+                    "missing_raw": 0,
+                    "other": 0,
+                    "narrowed_collision": 0,
+                },
+                scope_coverage=self.scope_coverage(filtered_df),
             )
 
-        export_df = self.filter_json_safe(filtered_df, filters, log=log)
+        safety_df = self.filter_json_safe(filtered_df, filters, log=log)
+        export_df = self.filter_nonempty_raw(safety_df)
         resolved_group_key = self.resolve_group_key(export_df, group_key)
         entries = self.build_entries(export_df, resolved_group_key)
         group_summaries = self.build_group_summaries(
             export_df,
             resolved_group_key,
+        )
+        blocked_breakdown = self.blocked_breakdown(
+            filtered_df,
+            filters,
         )
         pipe_count = self.unique_pipe_count(export_df)
         scope_count = sum(len(e.get("搜尋範圍", [])) for e in entries)
@@ -138,7 +153,10 @@ class JsonExporter:
             source_rows=len(df),
             filtered_rows=len(filtered_df),
             export_rows=len(export_df),
-            blocked_rows=max(0, len(filtered_df) - len(export_df)),
+            blocked_rows=sum(
+                int(blocked_breakdown.get(k, 0))
+                for k in ("unresolved", "needs_decision", "missing_raw", "other")
+            ),
             pipe_count=pipe_count,
             group_count=len(entries),
             scope_count=scope_count,
@@ -146,6 +164,8 @@ class JsonExporter:
             filtered_df=filtered_df,
             export_df=export_df,
             group_summaries=group_summaries,
+            blocked_breakdown=blocked_breakdown,
+            scope_coverage=self.scope_coverage(export_df),
         )
 
     # ─────────────────────────────────────────────────────────
@@ -237,6 +257,131 @@ class JsonExporter:
 
         return df_src
 
+    def filter_nonempty_raw(self, df_src: pd.DataFrame) -> pd.DataFrame:
+        if "Raw_3D_PipeCode" not in df_src.columns:
+            return df_src.iloc[0:0].copy()
+        raw_mask = df_src["Raw_3D_PipeCode"].astype(str).str.strip().ne("")
+        return df_src[raw_mask].copy()
+
+    def exportable_mask(
+        self,
+        df_src: pd.DataFrame,
+        applied_filters: Dict[str, list[str]],
+    ) -> pd.Series:
+        raw_mask = (
+            df_src["Raw_3D_PipeCode"].astype(str).str.strip().ne("")
+            if "Raw_3D_PipeCode" in df_src.columns
+            else pd.Series(False, index=df_src.index)
+        )
+        safety_mask = self.safety_mask(df_src, applied_filters)
+        return raw_mask & safety_mask
+
+    def safety_mask(
+        self,
+        df_src: pd.DataFrame,
+        applied_filters: Dict[str, list[str]],
+    ) -> pd.Series:
+        has_scope_filter = any(
+            str(k).strip() in {"ParentArea", "ScopeRoot"}
+            for k in (applied_filters or {}).keys()
+        )
+        if "Resolved" in df_src.columns:
+            resolved_mask = self.truthy_series(df_src["Resolved"])
+            pending_mask = self.pending_decision_mask(df_src)
+            narrowed_mask = (
+                pending_mask & self.allow_narrowed_collision(df_src)
+                if has_scope_filter
+                else pd.Series(False, index=df_src.index)
+            )
+            return resolved_mask | narrowed_mask
+        if "NeedsDecision" in df_src.columns:
+            decision_mask = self.truthy_series(df_src["NeedsDecision"])
+            narrowed_mask = (
+                decision_mask & self.allow_narrowed_collision(df_src)
+                if has_scope_filter
+                else pd.Series(False, index=df_src.index)
+            )
+            return (~decision_mask) | narrowed_mask
+        return pd.Series(True, index=df_src.index)
+
+    def pending_decision_mask(self, df_src: pd.DataFrame) -> pd.Series:
+        if "ResolutionStatus" in df_src.columns:
+            return (
+                df_src["ResolutionStatus"]
+                .astype(str)
+                .str.strip()
+                .eq("needs_decision")
+            )
+        if "NeedsDecision" in df_src.columns:
+            return self.truthy_series(df_src["NeedsDecision"])
+        return pd.Series(False, index=df_src.index)
+
+    def blocked_breakdown(
+        self,
+        df_src: pd.DataFrame,
+        applied_filters: Dict[str, list[str]],
+    ) -> Dict[str, int]:
+        if df_src.empty:
+            return {
+                "unresolved": 0,
+                "needs_decision": 0,
+                "missing_raw": 0,
+                "other": 0,
+                "narrowed_collision": 0,
+            }
+        raw_mask = (
+            df_src["Raw_3D_PipeCode"].astype(str).str.strip().ne("")
+            if "Raw_3D_PipeCode" in df_src.columns
+            else pd.Series(False, index=df_src.index)
+        )
+        safety_mask = self.safety_mask(df_src, applied_filters)
+        pending_mask = self.pending_decision_mask(df_src)
+        exported_mask = raw_mask & safety_mask
+        blocked_mask = ~exported_mask
+
+        missing_raw = blocked_mask & ~raw_mask
+        needs_decision = blocked_mask & raw_mask & pending_mask
+        unresolved = blocked_mask & raw_mask & ~pending_mask & ~safety_mask
+        other = blocked_mask & ~(missing_raw | needs_decision | unresolved)
+
+        has_scope_filter = any(
+            str(k).strip() in {"ParentArea", "ScopeRoot"}
+            for k in (applied_filters or {}).keys()
+        )
+        narrowed_collision = (
+            pending_mask & raw_mask & safety_mask
+            if has_scope_filter
+            else pd.Series(False, index=df_src.index)
+        )
+
+        return {
+            "unresolved": int(unresolved.sum()),
+            "needs_decision": int(needs_decision.sum()),
+            "missing_raw": int(missing_raw.sum()),
+            "other": int(other.sum()),
+            "narrowed_collision": int(narrowed_collision.sum()),
+        }
+
+    def scope_coverage(self, df_src: pd.DataFrame) -> Dict[str, dict]:
+        total = int(len(df_src))
+        coverage: Dict[str, dict] = {}
+        for col in ("PipeNodePath", "ScopeRoot", "ParentArea"):
+            if total == 0:
+                with_value = 0
+            elif col in df_src.columns:
+                with_value = int(
+                    df_src[col].fillna("").astype(str).str.strip().ne("").sum()
+                )
+            else:
+                with_value = 0
+            pct = 0.0 if total == 0 else round((with_value / total) * 100, 1)
+            coverage[col] = {
+                "with": with_value,
+                "total": total,
+                "percent": pct,
+            }
+        return coverage
+
     def resolve_group_key(self, df_src: pd.DataFrame, group_key: str) -> str:
         group_key = str(group_key or "").strip()
         if group_key:
@@ -311,8 +456,11 @@ class JsonExporter:
                     "流水號數": self.unique_nonempty_count(sub, "流水號"),
                     "資料列數": len(sub),
                     "Scope數": self.unique_nonempty_count(sub, "PipeNodePath"),
+                    "Path覆蓋率": self.coverage_label(sub, "PipeNodePath"),
                     "Root數": self.unique_nonempty_count(sub, "ScopeRoot"),
+                    "Root覆蓋率": self.coverage_label(sub, "ScopeRoot"),
                     "ParentArea數": self.unique_nonempty_count(sub, "ParentArea"),
+                    "Area覆蓋率": self.coverage_label(sub, "ParentArea"),
                     "範例管線號": self.example_pipes(sub),
                 }
             )
@@ -456,6 +604,17 @@ class JsonExporter:
         shown = values[:limit]
         suffix = "" if len(values) <= limit else f" ... +{len(values) - limit}"
         return ", ".join(shown) + suffix
+
+    @staticmethod
+    def coverage_label(df_src: pd.DataFrame, column: str) -> str:
+        total = len(df_src)
+        if total <= 0:
+            return "0/0 (0%)"
+        if column not in df_src.columns:
+            return f"0/{total} (0%)"
+        with_value = int(df_src[column].fillna("").astype(str).str.strip().ne("").sum())
+        pct = round((with_value / total) * 100)
+        return f"{with_value}/{total} ({pct}%)"
 
     @staticmethod
     def sort_group_entries(entries: List[dict], key_name: str = "群組") -> List[dict]:

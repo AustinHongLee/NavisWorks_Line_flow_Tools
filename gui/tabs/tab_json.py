@@ -11,17 +11,20 @@
 """
 from __future__ import annotations
 
+import json
 import os
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDialog,
     QFileDialog,
     QFrame,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -29,8 +32,11 @@ from PyQt6.QtWidgets import (
     QListWidgetItem,
     QMenu,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
+    QRadioButton,
     QSizePolicy,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QTextBrowser,
@@ -285,6 +291,10 @@ class JsonTabMixin:
         tb_lay.setContentsMargins(12, 6, 12, 6)
         tb_lay.setSpacing(8)
 
+        source_col = QVBoxLayout()
+        source_col.setContentsMargins(0, 0, 0, 0)
+        source_col.setSpacing(1)
+
         self._v2_lbl_source = QLabel("尚未載入資料")
         self._v2_lbl_source.setStyleSheet(
             "color: #64748B; font-size: 12px;"
@@ -293,7 +303,21 @@ class JsonTabMixin:
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Preferred,
         )
-        tb_lay.addWidget(self._v2_lbl_source)
+        source_col.addWidget(self._v2_lbl_source)
+
+        self._v2_lbl_blocked = QLabel("攔截：尚未計算")
+        self._v2_lbl_blocked.setStyleSheet(
+            "color: #64748B; font-size: 11px;"
+        )
+        source_col.addWidget(self._v2_lbl_blocked)
+
+        self._v2_lbl_scope = QLabel("範圍覆蓋：尚未計算")
+        self._v2_lbl_scope.setStyleSheet(
+            "color: #64748B; font-size: 11px;"
+        )
+        source_col.addWidget(self._v2_lbl_scope)
+
+        tb_lay.addLayout(source_col, stretch=1)
 
         btn_auto = QPushButton("自動載入")
         btn_auto.setToolTip("從專案目錄自動尋找 iso_match.xlsx")
@@ -354,8 +378,20 @@ class JsonTabMixin:
         ctrl_lay.setContentsMargins(10, 8, 10, 8)
         ctrl_lay.setSpacing(5)
 
+        select_box = QGroupBox("1. 選列 - 哪些列要進入候選？")
+        select_box.setStyleSheet(
+            "QGroupBox { font-size: 12px; font-weight: 700;"
+            " color: #334155; border: 1px solid #E2E8F0;"
+            " border-radius: 6px; margin-top: 8px; padding-top: 8px; }"
+            "QGroupBox::title { subcontrol-origin: margin; left: 8px;"
+            " padding: 0 4px; }"
+        )
+        select_lay = QVBoxLayout(select_box)
+        select_lay.setContentsMargins(8, 8, 8, 8)
+        select_lay.setSpacing(5)
+
         # ── 篩選列 1/2/3 ──
-        _FILTER_LABELS = ["母篩選", "篩選 2", "篩選 3"]
+        _FILTER_LABELS = ["條件 1", "條件 2", "條件 3"]
         self._v2_filter_row_widgets: list[dict] = []
 
         for i, label_text in enumerate(_FILTER_LABELS):
@@ -386,7 +422,7 @@ class JsonTabMixin:
 
             # 第一列右側加「✕ 重設全部」
             if i == 0:
-                btn_reset = QPushButton("✕ 重設全部")
+                btn_reset = QPushButton("清除全部")
                 btn_reset.setFixedHeight(26)
                 btn_reset.setCursor(
                     Qt.CursorShape.PointingHandCursor
@@ -403,7 +439,7 @@ class JsonTabMixin:
                 )
                 frow.addWidget(btn_reset)
 
-            ctrl_lay.addLayout(frow)
+            select_lay.addLayout(frow)
 
             widget_info = {
                 "cbo_col": cbo_col,
@@ -424,17 +460,46 @@ class JsonTabMixin:
                 )
             )
 
-        # ── 分隔線 ──
-        sep_line = QFrame()
-        sep_line.setFrameShape(QFrame.Shape.HLine)
-        sep_line.setFixedHeight(1)
-        sep_line.setStyleSheet("background: #E2E8F0;")
-        ctrl_lay.addWidget(sep_line)
+        ctrl_lay.addWidget(select_box)
 
-        # ── 分組依據 ──
+        package_box = QGroupBox("2. 包裝 - 選好的列要怎麼變成 JSON？")
+        package_box.setStyleSheet(select_box.styleSheet())
+        package_lay = QVBoxLayout(package_box)
+        package_lay.setContentsMargins(8, 8, 8, 8)
+        package_lay.setSpacing(6)
+
+        # ── 輸出模式 ──
+        mode_row = QHBoxLayout()
+        mode_row.setSpacing(10)
+        lbl_mode = QLabel("輸出模式")
+        lbl_mode.setStyleSheet(
+            "font-size: 12px; font-weight: 600; color: #475569;"
+        )
+        lbl_mode.setFixedWidth(56)
+        mode_row.addWidget(lbl_mode)
+        self._v2_radio_grouped = QRadioButton("依欄位分組（單一檔）")
+        self._v2_radio_flat = QRadioButton("平面清單")
+        self._v2_radio_split = QRadioButton("依欄位分組（每組一檔）")
+        self._v2_radio_grouped.setChecked(True)
+        self._v2_mode_group = QButtonGroup(page)
+        self._v2_mode_group.addButton(self._v2_radio_grouped)
+        self._v2_mode_group.addButton(self._v2_radio_flat)
+        self._v2_mode_group.addButton(self._v2_radio_split)
+        for rb in (
+            self._v2_radio_grouped,
+            self._v2_radio_flat,
+            self._v2_radio_split,
+        ):
+            rb.setStyleSheet("font-size: 12px; color: #334155;")
+            rb.toggled.connect(self._on_output_mode_changed)
+            mode_row.addWidget(rb)
+        mode_row.addStretch()
+        package_lay.addLayout(mode_row)
+
+        # ── 分組欄位 ──
         gk_row = QHBoxLayout()
         gk_row.setSpacing(6)
-        lbl_gk = QLabel("分組依據")
+        lbl_gk = QLabel("分組欄位")
         lbl_gk.setStyleSheet(
             "font-size: 12px; font-weight: 600; color: #475569;"
         )
@@ -443,19 +508,18 @@ class JsonTabMixin:
         self._v2_cbo_group_key = QComboBox()
         self._v2_cbo_group_key.setFixedWidth(150)
         self._v2_cbo_group_key.setToolTip(
-            "JSON 輸出時依此欄位分組\n"
-            "有群組值時預設「群組」，否則預設「流水號」\n"
-            "選「— 不分組（平面清單）」則純列出 Raw_3D_PipeCode"
+            "只決定分組值；JSON selection-set 名稱欄位固定輸出為「群組」。"
         )
         self._v2_cbo_group_key.currentIndexChanged.connect(
             lambda: (
                 self._refresh_preview_table(),
                 self._v2_update_live_count(),
+                self._v2_update_filename(),
             )
         )
         gk_row.addWidget(self._v2_cbo_group_key)
         gk_row.addStretch()
-        ctrl_lay.addLayout(gk_row)
+        package_lay.addLayout(gk_row)
 
         # ── 檔名 ──
         fn_row = QHBoxLayout()
@@ -470,7 +534,9 @@ class JsonTabMixin:
         self.v2_txt_filename.setFixedWidth(220)
         fn_row.addWidget(self.v2_txt_filename)
         fn_row.addStretch()
-        ctrl_lay.addLayout(fn_row)
+        package_lay.addLayout(fn_row)
+
+        ctrl_lay.addWidget(package_box)
 
         # ── 右側：操作說明 ──
         help_browser = QTextBrowser()
@@ -508,13 +574,13 @@ class JsonTabMixin:
             "供 Navisworks 匯入端限制搜尋範圍。</p>"
             "</div>"
         )
-        help_browser.setFixedWidth(310)
+        help_browser.setFixedWidth(0)
 
         # ── 組合：左控制 + 右說明 ──
         ctrl_and_help = QHBoxLayout()
         ctrl_and_help.setSpacing(8)
         ctrl_and_help.addWidget(ctrl_panel, stretch=1)
-        ctrl_and_help.addWidget(help_browser)
+        # 舊說明框保留為物件但預設不顯示；規則已拆進各區副標與 tooltip。
 
         # 未載入提示（載入後隱藏）
         self._lbl_filter_hint = QLabel(
@@ -550,25 +616,7 @@ class JsonTabMixin:
         lay.addWidget(self._v2_preview_caption)
         lay.addSpacing(2)
 
-        self._v2_table = QTableWidget()
-        self._v2_table.setEditTriggers(
-            QAbstractItemView.EditTrigger.NoEditTriggers
-        )
-        self._v2_table.setSelectionBehavior(
-            QAbstractItemView.SelectionBehavior.SelectRows
-        )
-        self._v2_table.setAlternatingRowColors(True)
-        self._v2_table.setContextMenuPolicy(
-            Qt.ContextMenuPolicy.CustomContextMenu
-        )
-        self._v2_table.customContextMenuRequested.connect(
-            self._on_preview_context_menu
-        )
-        self._v2_table.horizontalHeader().setStretchLastSection(
-            True
-        )
-        self._v2_table.verticalHeader().setDefaultSectionSize(24)
-        self._v2_table.setStyleSheet(
+        table_style = (
             "QTableWidget {"
             "  font-size: 12px;"
             "  color: #1E293B;"
@@ -595,7 +643,70 @@ class JsonTabMixin:
             "  border-right: 1px solid #E2E8F0;"
             "}"
         )
-        lay.addWidget(self._v2_table, stretch=1)
+
+        self._v2_summary_table = QTableWidget()
+        self._v2_summary_table.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+        self._v2_summary_table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self._v2_summary_table.setAlternatingRowColors(True)
+        self._v2_summary_table.horizontalHeader().setStretchLastSection(True)
+        self._v2_summary_table.verticalHeader().setDefaultSectionSize(24)
+        self._v2_summary_table.setStyleSheet(table_style)
+        self._v2_summary_table.itemSelectionChanged.connect(
+            self._on_summary_selection_changed
+        )
+
+        self._v2_json_preview = QPlainTextEdit()
+        self._v2_json_preview.setReadOnly(True)
+        self._v2_json_preview.setStyleSheet(
+            "QPlainTextEdit {"
+            "  font-family: Consolas, 'Cascadia Mono', monospace;"
+            "  font-size: 12px;"
+            "  color: #0F172A;"
+            "  background: #FFFFFF;"
+            "  border: 1px solid #E2E8F0;"
+            "  border-radius: 6px;"
+            "  padding: 8px;"
+            "}"
+        )
+
+        self._v2_table = QTableWidget()
+        self._v2_table.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+        self._v2_table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self._v2_table.setAlternatingRowColors(True)
+        self._v2_table.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu
+        )
+        self._v2_table.customContextMenuRequested.connect(
+            self._on_preview_context_menu
+        )
+        self._v2_table.horizontalHeader().setStretchLastSection(True)
+        self._v2_table.verticalHeader().setDefaultSectionSize(24)
+        self._v2_table.setStyleSheet(table_style)
+
+        self._v2_preview_tabs = QTabWidget()
+        self._v2_preview_tabs.setStyleSheet(
+            "QTabWidget::pane { border: 1px solid #E2E8F0;"
+            " border-radius: 6px; background: #FFFFFF; }"
+            "QTabBar::tab { background: #F8FAFC; color: #475569;"
+            " border: 1px solid #E2E8F0; padding: 6px 14px;"
+            " margin-right: 2px; border-top-left-radius: 6px;"
+            " border-top-right-radius: 6px; }"
+            "QTabBar::tab:selected { background: #FFFFFF;"
+            f" color: {C_PRIMARY}; font-weight: 700; }}"
+        )
+        self._v2_preview_tabs.addTab(self._v2_summary_table, "分組摘要")
+        self._v2_preview_tabs.addTab(self._v2_json_preview, "JSON 預覽")
+        self._v2_preview_tabs.addTab(self._v2_table, "明細")
+
+        lay.addWidget(self._v2_preview_tabs, stretch=1)
         lay.addSpacing(6)
 
         # ════════════════════════════════
@@ -630,12 +741,12 @@ class JsonTabMixin:
         )
         bot_lay.addWidget(self.v2_status_label)
 
-        btn_export = QPushButton("  匯出 JSON  ")
-        btn_export.setObjectName("btnExport")
-        btn_export.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_export.setFixedHeight(34)
-        btn_export.clicked.connect(self._v2_live_export)
-        bot_lay.addWidget(btn_export)
+        self._v2_btn_export = QPushButton("  匯出單一檔  ")
+        self._v2_btn_export.setObjectName("btnExport")
+        self._v2_btn_export.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._v2_btn_export.setFixedHeight(34)
+        self._v2_btn_export.clicked.connect(self._v2_live_export)
+        bot_lay.addWidget(self._v2_btn_export)
 
         lay.addWidget(bot_frame)
 
@@ -644,6 +755,7 @@ class JsonTabMixin:
         # ── 內部狀態 ──
         self._v2_col_checked: dict[str, set[str] | None] = {}
         self._v2_cat_cols: list[str] = []  # 可篩選的分類欄位
+        self._v2_last_result = None
         # 向後相容別名 / 空列表
         self.v2_cbo_group_key = self._v2_cbo_group_key
         self.v2_filter_field_cbos = []
@@ -789,6 +901,14 @@ class JsonTabMixin:
             f"color: {C_PRIMARY}; font-weight: 600;"
             " font-size: 12px;"
         )
+        self._v2_lbl_blocked.setText("攔截：載入後依目前篩選計算")
+        self._v2_lbl_blocked.setStyleSheet(
+            "color: #64748B; font-size: 11px;"
+        )
+        self._v2_lbl_scope.setText("範圍覆蓋：載入後依目前篩選計算")
+        self._v2_lbl_scope.setStyleSheet(
+            "color: #64748B; font-size: 11px;"
+        )
 
         # 群組 toggle
         has_group = "群組" in cols
@@ -833,7 +953,6 @@ class JsonTabMixin:
         # 填充分組依據下拉
         self._v2_cbo_group_key.blockSignals(True)
         self._v2_cbo_group_key.clear()
-        self._v2_cbo_group_key.addItem("— 不分組（平面清單）")
         self._v2_cbo_group_key.addItems(cat_cols)
         # 群組只是 resolved_mapping 中的普通欄位；有值時代表多個流水號要合併輸出。
         has_group_values = (
@@ -845,6 +964,7 @@ class JsonTabMixin:
         elif "流水號" in cat_cols:
             self._v2_cbo_group_key.setCurrentText("流水號")
         self._v2_cbo_group_key.blockSignals(False)
+        self._on_output_mode_changed()
 
         # 填充篩選列下拉選單
         for info in self._v2_filter_row_widgets:
@@ -861,11 +981,12 @@ class JsonTabMixin:
         # 顯示控制面板
         self._lbl_filter_hint.setVisible(False)
         self._ctrl_panel.setVisible(True)
-        self._help_browser.setVisible(True)
+        self._help_browser.setVisible(False)
 
         # 填充表格 & 統計
         self._refresh_preview_table()
         self._v2_update_live_count()
+        self._v2_update_filename()
 
         self.v2_status_label.setText("✓ 已載入，預覽表格只顯示實際可匯出的列")
         self.v2_status_label.setStyleSheet(
@@ -970,11 +1091,35 @@ class JsonTabMixin:
     # 固定顯示欄位（Raw_3D_PipeCode 在最後）
     _PINNED_TAIL = ["Raw_3D_PipeCode"]
 
+    def _current_output_mode(self) -> str:
+        """Return the user-facing output strategy as an internal label."""
+        if getattr(self, "_v2_radio_flat", None) and self._v2_radio_flat.isChecked():
+            return "flat"
+        if getattr(self, "_v2_radio_split", None) and self._v2_radio_split.isChecked():
+            return "grouped_split"
+        return "grouped_single"
+
+    def _on_output_mode_changed(self):
+        """Radio changed: enable the right controls and refresh the planner."""
+        mode = self._current_output_mode()
+        is_flat = mode == "flat"
+        if hasattr(self, "_v2_cbo_group_key"):
+            self._v2_cbo_group_key.setEnabled(not is_flat)
+        if hasattr(self, "_v2_btn_export"):
+            label = "  匯出單一檔  "
+            if mode == "grouped_split":
+                label = "  匯出多個檔  "
+            self._v2_btn_export.setText(label)
+        if getattr(self, "_v2_iso_df", None) is not None:
+            self._refresh_preview_table()
+            self._v2_update_live_count()
+            self._v2_update_filename()
+
     def _get_pinned_head(self) -> list[str]:
         """動態產生表格前端固定欄：流水號 + 分組依據選的欄位。"""
         head = ["流水號"]
-        gk = self._v2_cbo_group_key.currentText().strip()
-        if not gk.startswith("—") and gk:
+        gk = self._current_group_key()
+        if gk not in ("__FLAT__", "__ALL__") and gk:
             head.append(gk)
         return head
 
@@ -1033,9 +1178,11 @@ class JsonTabMixin:
 
     def _current_group_key(self) -> str:
         """Return the exporter group key sentinel/column for the current UI."""
-        gk_text = self._v2_cbo_group_key.currentText().strip()
-        if gk_text.startswith("—") or not gk_text:
+        if self._current_output_mode() == "flat":
             return "__FLAT__"
+        gk_text = self._v2_cbo_group_key.currentText().strip()
+        if not gk_text:
+            return "流水號"
         return gk_text
 
     def _build_current_export_result(self, name: str = "preview"):
@@ -1054,26 +1201,58 @@ class JsonTabMixin:
         )
 
     def _refresh_preview_table(self):
-        """刷新資料預覽表格內容。"""
+        """刷新三段預覽：分組摘要、JSON 樣本、明細。"""
         result = self._build_current_export_result()
-        if result is None or result.export_rows == 0:
-            self._v2_table.setRowCount(0)
-            self._v2_table.setColumnCount(0)
+        self._v2_last_result = result
+        if result is None:
+            self._clear_preview_tables()
+            self._v2_json_preview.setPlainText("")
             self._v2_preview_caption.setText("資料預覽")
             return
-        if result.group_summaries:
-            self._fill_group_summary_table(result)
-            return
-        sub = result.export_df
-        self._v2_preview_caption.setText("明細預覽")
 
-        cols = [
-            c for c in self._get_display_columns()
-            if c in sub.columns
-        ]
+        if result.export_rows == 0:
+            self._clear_preview_tables()
+            self._v2_json_preview.setPlainText(
+                "目前沒有可安全匯出的 JSON entry。\n"
+                "請調整篩選條件，或先處理 collision / unresolved 列。"
+            )
+            self._v2_preview_caption.setText("預覽與匯出：沒有可匯出的資料")
+            self._v2_preview_tabs.setTabEnabled(0, False)
+            self._v2_preview_tabs.setCurrentIndex(1)
+            return
+
+        self._fill_group_summary_table(result)
+        self._fill_json_preview(result)
+        self._fill_detail_table(result)
+
+        if result.group_summaries:
+            self._v2_preview_caption.setText(
+                f"預覽與匯出：依「{result.group_key}」分組，"
+                f"{result.group_count} 組 / {result.pipe_count} 筆 3D 身分證"
+            )
+            self._v2_preview_tabs.setTabEnabled(0, True)
+            self._v2_preview_tabs.setCurrentIndex(0)
+        else:
+            self._v2_preview_caption.setText(
+                f"明細預覽：{result.pipe_count} 筆 3D 身分證"
+            )
+            self._v2_preview_tabs.setTabEnabled(0, False)
+            self._v2_preview_tabs.setCurrentIndex(2)
+
+    def _clear_preview_tables(self):
+        for table in (self._v2_summary_table, self._v2_table):
+            table.setRowCount(0)
+            table.setColumnCount(0)
+
+    def _fill_detail_table(self, result, subset_df=None):
+        """顯示實際會進 JSON 的明細列；摘要點選後也共用這張表。"""
+        sub = result.export_df if subset_df is None else subset_df
+        cols = [c for c in self._get_display_columns() if c in sub.columns]
+        if not cols and len(sub.columns):
+            cols = list(sub.columns[:8])
         preview = sub.head(_PREVIEW_MAX_ROWS)
         source_indices = preview.index.tolist()
-        display = preview[cols].reset_index(drop=True)
+        display = preview[cols].reset_index(drop=True) if cols else preview
         n_rows = len(display)
         n_cols = len(cols)
 
@@ -1088,7 +1267,6 @@ class JsonTabMixin:
                 item = QTableWidgetItem(val)
                 item.setData(Qt.ItemDataRole.UserRole, source_indices[r_idx])
                 item.setForeground(Qt.GlobalColor.black)
-                # 被篩選的欄位 → 粗體標記
                 if cols[c_idx] in self._v2_live_filters:
                     font = item.font()
                     font.setBold(True)
@@ -1096,13 +1274,23 @@ class JsonTabMixin:
                 self._v2_table.setItem(r_idx, c_idx, item)
 
         self._v2_table.resizeColumnsToContents()
-
-        # 超過預覽上限提示
         total = len(sub)
         if total > _PREVIEW_MAX_ROWS:
             self.v2_status_label.setText(
-                f"（顯示前 {_PREVIEW_MAX_ROWS} 列 / 共 {total} 列）"
+                f"（明細顯示前 {_PREVIEW_MAX_ROWS} 列 / 共 {total} 列）"
             )
+
+    def _fill_json_preview(self, result):
+        if not result.entries:
+            self._v2_json_preview.setPlainText("[]")
+            return
+        shown = result.entries[:1]
+        text = json.dumps(shown, ensure_ascii=False, indent=2)
+        if len(result.entries) > 1:
+            text += (
+                f"\n\n（僅預覽第一組；實際會輸出 {len(result.entries)} 組）"
+            )
+        self._v2_json_preview.setPlainText(text)
 
     def _fill_group_summary_table(self, result):
         """顯示分組後的 JSON 摘要，而不是讓使用者在明細列海裡找答案。"""
@@ -1112,36 +1300,57 @@ class JsonTabMixin:
             "3D身分證數",
             "流水號數",
             "資料列數",
-            "Scope數",
+            "Path覆蓋率",
             "Root數",
-            "ParentArea數",
+            "Area覆蓋率",
             "範例管線號",
         ]
         cols = [c for c in cols if any(c in row for row in rows)]
-        self._v2_preview_caption.setText(
-            f"分組摘要：依「{result.group_key}」聚合"
-        )
 
-        self._v2_table.setRowCount(len(rows))
-        self._v2_table.setColumnCount(len(cols))
-        self._v2_table.setHorizontalHeaderLabels(cols)
+        self._v2_summary_table.blockSignals(True)
+        self._v2_summary_table.setRowCount(len(rows))
+        self._v2_summary_table.setColumnCount(len(cols))
+        self._v2_summary_table.setHorizontalHeaderLabels(cols)
 
         for r_idx, row in enumerate(rows):
+            group_value = str(row.get(result.group_key, "")).strip()
             for c_idx, col in enumerate(cols):
                 val = str(row.get(col, "")).strip()
                 item = QTableWidgetItem(val)
                 item.setForeground(Qt.GlobalColor.black)
+                item.setData(Qt.ItemDataRole.UserRole, group_value)
                 if col == result.group_key:
                     font = item.font()
                     font.setBold(True)
                     item.setFont(font)
-                self._v2_table.setItem(r_idx, c_idx, item)
+                self._v2_summary_table.setItem(r_idx, c_idx, item)
 
-        self._v2_table.resizeColumnsToContents()
-        if len(result.group_summaries) > _PREVIEW_MAX_ROWS:
-            self.v2_status_label.setText(
-                f"（顯示前 {_PREVIEW_MAX_ROWS} 組 / 共 {len(result.group_summaries)} 組）"
-            )
+        self._v2_summary_table.resizeColumnsToContents()
+        self._v2_summary_table.blockSignals(False)
+
+    def _on_summary_selection_changed(self):
+        result = getattr(self, "_v2_last_result", None)
+        if result is None or not result.group_summaries:
+            return
+        selected = self._v2_summary_table.selectedItems()
+        if not selected:
+            return
+        row_idx = selected[0].row()
+        first_item = self._v2_summary_table.item(row_idx, 0)
+        if first_item is None:
+            return
+        group_value = str(first_item.data(Qt.ItemDataRole.UserRole) or "").strip()
+        if not group_value or result.group_key not in result.export_df.columns:
+            return
+        sub = result.export_df[
+            result.export_df[result.group_key].astype(str).str.strip().eq(group_value)
+        ]
+        self._fill_detail_table(result, subset_df=sub)
+        self._v2_preview_tabs.setCurrentIndex(2)
+        self._v2_preview_caption.setText(
+            f"明細預覽：{result.group_key} = {group_value}，"
+            f"{len(sub)} 列 / {result.pipe_count} 筆 3D 身分證（全體）"
+        )
 
     def _on_preview_context_menu(self, pos):
         item = self._v2_table.itemAt(pos)
@@ -1185,6 +1394,63 @@ class JsonTabMixin:
     #  統計 & 檔名
     # ════════════════════════════════════════════════════════
 
+    @staticmethod
+    def _coverage_piece(label: str, coverage: dict) -> str:
+        total = int(coverage.get("total", 0) or 0)
+        with_value = int(coverage.get("with", 0) or 0)
+        percent = float(coverage.get("percent", 0) or 0)
+        return f"{label} {with_value}/{total} ({percent:g}%)"
+
+    def _update_source_health(self, result=None):
+        """來源健康狀態：攔截原因與 scope 覆蓋率。"""
+        if result is None:
+            result = getattr(self, "_v2_last_result", None)
+        if result is None:
+            return
+
+        bb = result.blocked_breakdown or {}
+        blocked = result.blocked_rows
+        if blocked:
+            bits = [
+                f"未解析 {int(bb.get('unresolved', 0))}",
+                f"待決策 {int(bb.get('needs_decision', 0))}",
+                f"缺 raw {int(bb.get('missing_raw', 0))}",
+            ]
+            other = int(bb.get("other", 0))
+            if other:
+                bits.append(f"其他 {other}")
+            narrowed = int(bb.get("narrowed_collision", 0))
+            if narrowed:
+                bits.append(f"範圍已縮小 collision {narrowed}")
+            self._v2_lbl_blocked.setText(
+                f"攔截 {blocked}：{' / '.join(bits)}"
+            )
+            self._v2_lbl_blocked.setStyleSheet(
+                "color: #D97706; font-size: 11px; font-weight: 600;"
+            )
+        else:
+            narrowed = int(bb.get("narrowed_collision", 0))
+            suffix = f"（含範圍已縮小 collision {narrowed}）" if narrowed else ""
+            self._v2_lbl_blocked.setText(f"攔截 0：目前篩選可安全匯出{suffix}")
+            self._v2_lbl_blocked.setStyleSheet(
+                f"color: {C_SUCCESS}; font-size: 11px; font-weight: 600;"
+            )
+
+        sc = result.scope_coverage or {}
+        self._v2_lbl_scope.setText(
+            "範圍覆蓋："
+            + " · ".join(
+                [
+                    self._coverage_piece("Path", sc.get("PipeNodePath", {})),
+                    self._coverage_piece("Root", sc.get("ScopeRoot", {})),
+                    self._coverage_piece("Area", sc.get("ParentArea", {})),
+                ]
+            )
+        )
+        self._v2_lbl_scope.setStyleSheet(
+            "color: #475569; font-size: 11px;"
+        )
+
     def _v2_update_live_count(self):
         """即時計算篩選後的列數並更新底部標籤。"""
         if self._v2_iso_df is None:
@@ -1196,12 +1462,16 @@ class JsonTabMixin:
             self._v2_lbl_count.setText("尚未載入")
             return
 
+        self._update_source_health(result)
+
         if result.filtered_rows == 0:
             self._v2_lbl_count.setText(f"⚠ 0 / {result.source_rows} 列符合")
             self._v2_lbl_count.setStyleSheet(
                 "font-size: 12px; font-weight: 600;"
                 f" color: {C_ERROR};"
             )
+            if hasattr(self, "_v2_btn_export"):
+                self._v2_btn_export.setText("  匯出單一檔  ")
             return
 
         if result.export_rows == 0:
@@ -1212,6 +1482,8 @@ class JsonTabMixin:
                 "font-size: 12px; font-weight: 600;"
                 f" color: {C_ERROR};"
             )
+            if hasattr(self, "_v2_btn_export"):
+                self._v2_btn_export.setText("  匯出單一檔  ")
             return
 
         parts = [
@@ -1229,9 +1501,20 @@ class JsonTabMixin:
             "font-size: 12px; font-weight: 600;"
             f" color: {C_SUCCESS};"
         )
+        if hasattr(self, "_v2_btn_export"):
+            if self._current_output_mode() == "grouped_split":
+                self._v2_btn_export.setText(
+                    f"  匯出 {result.group_count} 個檔  "
+                )
+            else:
+                self._v2_btn_export.setText("  匯出單一檔  ")
         if result.blocked_rows:
+            bb = result.blocked_breakdown or {}
             self.v2_status_label.setText(
-                "預覽已套用安全檢查，待決策/未 resolved 的列不會出現在 JSON。"
+                "預覽已套用安全檢查："
+                f"未解析 {int(bb.get('unresolved', 0))} / "
+                f"待決策 {int(bb.get('needs_decision', 0))} / "
+                f"缺 raw {int(bb.get('missing_raw', 0))}"
             )
             self.v2_status_label.setStyleSheet(
                 "color: #D97706; font-size: 11px; font-weight: 600;"
@@ -1262,16 +1545,36 @@ class JsonTabMixin:
             )
 
     def _v2_update_filename(self):
-        """依篩選欄位名稱自動更新檔名，例如「系統_材質」。"""
-        parts = []
+        """依篩選值、分組欄位與輸出模式產生較可稽核的檔名。"""
+        from utils.utils_common import CommonUtils
+
+        parts: list[str] = []
         for info in self._v2_filter_row_widgets:
             col = info.get("active_col")
             if col and col in self._v2_live_filters:
-                parts.append(col)
-        if parts:
-            self.v2_txt_filename.setText("_".join(parts))
-        else:
-            self.v2_txt_filename.setText("live_selection")
+                vals = [
+                    str(v).strip()
+                    for v in self._v2_live_filters.get(col, [])
+                    if str(v).strip()
+                ]
+                if vals:
+                    shown = "_".join(vals[:3]) if len(vals) <= 3 else f"{len(vals)}values"
+                    parts.append(f"{col}-{shown}")
+
+        mode = self._current_output_mode()
+        gk = self._current_group_key()
+        if not parts:
+            parts.append("live_selection")
+        if mode != "flat" and gk not in ("__FLAT__", "__ALL__"):
+            parts.append(f"by-{gk}")
+        if mode == "flat":
+            parts.append("flat")
+        elif mode == "grouped_split":
+            parts.append("split")
+
+        self.v2_txt_filename.setText(
+            CommonUtils.sanitize_filename("__".join(parts))
+        )
 
     # ════════════════════════════════════════════════════════
     #  匯出 JSON
@@ -1329,8 +1632,10 @@ class JsonTabMixin:
         filters = dict(self._v2_live_filters)
 
         group_key = self._current_group_key()
+        output_mode = self._current_output_mode()
 
         from utils.utils_common import FileLogger
+        from utils.utils_common import CommonUtils
 
         logger = (
             FileLogger(base_dir)
@@ -1348,21 +1653,56 @@ class JsonTabMixin:
             return
 
         try:
+            cases = [
+                {
+                    "name": name,
+                    "group_key": group_key,
+                    "filters": filters,
+                }
+            ]
+            if output_mode == "grouped_split":
+                if group_key in ("__FLAT__", "__ALL__") or not result.group_summaries:
+                    QMessageBox.warning(
+                        self,
+                        "無法分檔匯出",
+                        "請選擇分組欄位，並確認目前篩選後有分組摘要。",
+                    )
+                    return
+                cases = []
+                for row in result.group_summaries:
+                    group_value = str(row.get(group_key, "")).strip()
+                    if not group_value:
+                        continue
+                    case_filters = dict(filters)
+                    case_filters[group_key] = [group_value]
+                    cases.append(
+                        {
+                            "name": CommonUtils.sanitize_filename(
+                                f"{name}__{group_key}-{group_value}"
+                            ),
+                            "group_key": group_key,
+                            "filters": case_filters,
+                        }
+                    )
+                if not cases:
+                    QMessageBox.warning(
+                        self,
+                        "無法分檔匯出",
+                        "目前分組摘要沒有任何有效分組值。",
+                    )
+                    return
+
             n = exporter.export_json_v2(
                 iso_match_path=iso_path,
-                cases=[
-                    {
-                        "name": name,
-                        "group_key": group_key,
-                        "filters": filters,
-                    }
-                ],
+                cases=cases,
                 out_dir=base_dir,
             )
             if n > 0:
-                self.v2_status_label.setText(
-                    f"✅ 已匯出 → {name}.json"
-                )
+                if output_mode == "grouped_split":
+                    msg = f"✅ 已匯出 {n} 個 JSON 檔"
+                else:
+                    msg = f"✅ 已匯出 → {name}.json"
+                self.v2_status_label.setText(msg)
                 self.v2_status_label.setStyleSheet(
                     f"color: {C_SUCCESS}; font-size: 12px;"
                     " font-weight: 600;"

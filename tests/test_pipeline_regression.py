@@ -436,6 +436,64 @@ class PipelineRegressionTests(unittest.TestCase):
                 ],
             )
 
+    def test_export_json_v2_split_cases_keep_stable_group_schema(self):
+        with self._tmpdir() as d:
+            mapping = os.path.join(d, "resolved_mapping.csv")
+            pd.DataFrame(
+                [
+                    {
+                        "Resolved": "1",
+                        "流水號": "1",
+                        "系統": "AI",
+                        "Raw_3D_PipeCode": "/AI-001",
+                    },
+                    {
+                        "Resolved": "1",
+                        "流水號": "2",
+                        "系統": "AP",
+                        "Raw_3D_PipeCode": "/AP-001",
+                    },
+                    {
+                        "Resolved": "1",
+                        "流水號": "3",
+                        "系統": "AI",
+                        "Raw_3D_PipeCode": "/AI-002",
+                    },
+                ]
+            ).to_csv(mapping, index=False, encoding="utf-8-sig")
+
+            cases = [
+                {
+                    "name": "by_system__系統-AI",
+                    "group_key": "系統",
+                    "filters": {"系統": ["AI"]},
+                },
+                {
+                    "name": "by_system__系統-AP",
+                    "group_key": "系統",
+                    "filters": {"系統": ["AP"]},
+                },
+            ]
+            count = JsonExporter().export_json_v2(mapping, cases, out_dir=d)
+            self.assertEqual(count, 2)
+
+            with open(
+                os.path.join(d, "by_system_系統-AI.json"),
+                encoding="utf-8",
+            ) as f:
+                ai_data = json.load(f)
+            with open(
+                os.path.join(d, "by_system_系統-AP.json"),
+                encoding="utf-8",
+            ) as f:
+                ap_data = json.load(f)
+
+            self.assertEqual(ai_data[0]["群組"], "AI")
+            self.assertEqual(ai_data[0]["管線號"], ["/AI-001", "/AI-002"])
+            self.assertNotIn("系統", ai_data[0])
+            self.assertEqual(ap_data[0]["群組"], "AP")
+            self.assertEqual(ap_data[0]["管線號"], ["/AP-001"])
+
     def test_json_export_case_result_reports_safety_blocks(self):
         df = pd.DataFrame(
             [
@@ -450,6 +508,11 @@ class PipelineRegressionTests(unittest.TestCase):
                     "流水號": "2",
                     "Raw_3D_PipeCode": "/PENDING",
                 },
+                {
+                    "Resolved": "1",
+                    "流水號": "3",
+                    "Raw_3D_PipeCode": "",
+                },
             ]
         )
         result = JsonExporter().build_case_result(
@@ -457,9 +520,11 @@ class PipelineRegressionTests(unittest.TestCase):
             {"name": "selection", "group_key": "流水號", "filters": {}},
         )
 
-        self.assertEqual(result.filtered_rows, 2)
+        self.assertEqual(result.filtered_rows, 3)
         self.assertEqual(result.export_rows, 1)
-        self.assertEqual(result.blocked_rows, 1)
+        self.assertEqual(result.blocked_rows, 2)
+        self.assertEqual(result.blocked_breakdown["needs_decision"], 1)
+        self.assertEqual(result.blocked_breakdown["missing_raw"], 1)
         self.assertEqual(result.pipe_count, 1)
         self.assertEqual(result.group_count, 1)
 
@@ -560,9 +625,11 @@ class PipelineRegressionTests(unittest.TestCase):
         self.assertEqual(result.group_count, 2)
         self.assertEqual(result.entries[0]["群組"], "AI")
         self.assertNotIn("系統", result.entries[0])
+        self.assertEqual(result.scope_coverage["PipeNodePath"]["percent"], 100.0)
         summaries = {row["系統"]: row for row in result.group_summaries}
         self.assertEqual(summaries["AI"]["3D身分證數"], 1)
         self.assertEqual(summaries["AI"]["流水號數"], 2)
+        self.assertEqual(summaries["AI"]["Path覆蓋率"], "2/2 (100%)")
         self.assertEqual(summaries["AP"]["3D身分證數"], 1)
 
     def test_resolved_mapping_preserves_iso_source_classification_columns(self):
