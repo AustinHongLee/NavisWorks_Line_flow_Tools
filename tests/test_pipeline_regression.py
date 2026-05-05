@@ -518,6 +518,51 @@ class PipelineRegressionTests(unittest.TestCase):
         self.assertEqual(result.group_key, "流水號")
         self.assertEqual(result.entries[0]["流水號"], "1")
 
+    def test_json_export_group_summary_counts_classification_column(self):
+        df = pd.DataFrame(
+            [
+                {
+                    "Resolved": "1",
+                    "流水號": "1",
+                    "系統": "AI",
+                    "Raw_3D_PipeCode": "/AI-001",
+                    "PipeNodePath": "ROOT___AI___/AI-001",
+                    "ScopeRoot": "ROOT",
+                    "ParentArea": "AI",
+                },
+                {
+                    "Resolved": "1",
+                    "流水號": "2",
+                    "系統": "AI",
+                    "Raw_3D_PipeCode": "/AI-001",
+                    "PipeNodePath": "ROOT___AI___/AI-001",
+                    "ScopeRoot": "ROOT",
+                    "ParentArea": "AI",
+                },
+                {
+                    "Resolved": "1",
+                    "流水號": "3",
+                    "系統": "AP",
+                    "Raw_3D_PipeCode": "/AP-001",
+                    "PipeNodePath": "ROOT___AP___/AP-001",
+                    "ScopeRoot": "ROOT",
+                    "ParentArea": "AP",
+                },
+            ]
+        )
+
+        result = JsonExporter().build_case_result(
+            df,
+            {"name": "by_system", "group_key": "系統", "filters": {}},
+        )
+
+        self.assertEqual(result.group_key, "系統")
+        self.assertEqual(result.group_count, 2)
+        summaries = {row["系統"]: row for row in result.group_summaries}
+        self.assertEqual(summaries["AI"]["3D身分證數"], 1)
+        self.assertEqual(summaries["AI"]["流水號數"], 2)
+        self.assertEqual(summaries["AP"]["3D身分證數"], 1)
+
     def test_resolved_mapping_preserves_iso_source_classification_columns(self):
         with self._tmpdir() as d:
             iso_match = os.path.join(d, "iso_match.xlsx")

@@ -33,6 +33,7 @@ class JsonExportCaseResult:
     entries: List[dict]
     filtered_df: pd.DataFrame = field(repr=False)
     export_df: pd.DataFrame = field(repr=False)
+    group_summaries: List[dict] = field(default_factory=list)
 
 
 class JsonExporter:
@@ -124,6 +125,10 @@ class JsonExporter:
         export_df = self.filter_json_safe(filtered_df, filters, log=log)
         resolved_group_key = self.resolve_group_key(export_df, group_key)
         entries = self.build_entries(export_df, resolved_group_key)
+        group_summaries = self.build_group_summaries(
+            export_df,
+            resolved_group_key,
+        )
         pipe_count = self.unique_pipe_count(export_df)
         scope_count = sum(len(e.get("搜尋範圍", [])) for e in entries)
         return JsonExportCaseResult(
@@ -140,6 +145,7 @@ class JsonExporter:
             entries=entries,
             filtered_df=filtered_df,
             export_df=export_df,
+            group_summaries=group_summaries,
         )
 
     # ─────────────────────────────────────────────────────────
@@ -284,6 +290,32 @@ class JsonExporter:
             entries.append(entry)
         return self.sort_group_entries(entries, key_name=group_key)
 
+    def build_group_summaries(self, df_src: pd.DataFrame, group_key: str) -> List[dict]:
+        if df_src.empty or group_key in ("__FLAT__", "__ALL__"):
+            return []
+        if group_key not in df_src.columns:
+            return []
+
+        summaries: List[dict] = []
+        sub_df = df_src[df_src["Raw_3D_PipeCode"] != ""]
+        for key, sub in sub_df.groupby(group_key, sort=False):
+            key_v = str(key).strip()
+            if not key_v:
+                continue
+            summaries.append(
+                {
+                    group_key: key_v,
+                    "3D身分證數": self.unique_pipe_count(sub),
+                    "流水號數": self.unique_nonempty_count(sub, "流水號"),
+                    "資料列數": len(sub),
+                    "Scope數": self.unique_nonempty_count(sub, "PipeNodePath"),
+                    "Root數": self.unique_nonempty_count(sub, "ScopeRoot"),
+                    "ParentArea數": self.unique_nonempty_count(sub, "ParentArea"),
+                    "範例管線號": self.example_pipes(sub),
+                }
+            )
+        return self.sort_group_entries(summaries, key_name=group_key)
+
     def build_flat_entries(self, df_src: pd.DataFrame) -> List[dict]:
         sub_df = df_src[df_src["Raw_3D_PipeCode"] != ""]
         raws = CommonUtils.unique_preserve(sub_df["Raw_3D_PipeCode"].tolist())
@@ -398,6 +430,30 @@ class JsonExporter:
                 ]
             )
         )
+
+    @staticmethod
+    def unique_nonempty_count(df_src: pd.DataFrame, column: str) -> int:
+        if column not in df_src.columns:
+            return 0
+        values = df_src[column].fillna("").astype(str).str.strip()
+        return values[values.ne("")].nunique()
+
+    @staticmethod
+    def example_pipes(df_src: pd.DataFrame, limit: int = 3) -> str:
+        if "Raw_3D_PipeCode" not in df_src.columns:
+            return ""
+        values = CommonUtils.unique_preserve(
+            [
+                str(v).strip()
+                for v in df_src["Raw_3D_PipeCode"].tolist()
+                if str(v).strip()
+            ]
+        )
+        if not values:
+            return ""
+        shown = values[:limit]
+        suffix = "" if len(values) <= limit else f" ... +{len(values) - limit}"
+        return ", ".join(shown) + suffix
 
     @staticmethod
     def sort_group_entries(entries: List[dict], key_name: str = "群組") -> List[dict]:

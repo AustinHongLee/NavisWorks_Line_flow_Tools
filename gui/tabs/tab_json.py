@@ -500,8 +500,8 @@ class JsonTabMixin:
             "下方統計會顯示被擋數量。</p>"
             "<p style='margin:0 0 5px;'>"
             "<b>3. 分組依據</b><br>"
-            "<b>群組</b> 是資料欄位，不是額外模式；若同一 item 包含多個流水號，"
-            "預設用群組合併匯出。沒有群組時才退回流水號。</p>"
+            "可選 <b>系統</b>、保溫、材質、群組、流水號等任一欄位。"
+            "選分類欄位時，下方會顯示每組挾帶幾個 3D 身分證。</p>"
             "<p style='margin:0;'>"
             "<b>4. 搜尋範圍</b><br>"
             "若資料有 PipeNodePath / ParentArea，JSON 會逐管線輸出 scope，"
@@ -543,6 +543,13 @@ class JsonTabMixin:
         # ════════════════════════════════
         #  Row 3 — 資料預覽表格
         # ════════════════════════════════
+        self._v2_preview_caption = QLabel("資料預覽")
+        self._v2_preview_caption.setStyleSheet(
+            "font-size: 11px; font-weight: 600; color: #475569;"
+        )
+        lay.addWidget(self._v2_preview_caption)
+        lay.addSpacing(2)
+
         self._v2_table = QTableWidget()
         self._v2_table.setEditTriggers(
             QAbstractItemView.EditTrigger.NoEditTriggers
@@ -794,16 +801,31 @@ class JsonTabMixin:
         _PINNED = [
             "流水號",
             "群組",
+            "系統",
+            "保溫",
+            "材質",
+            "試壓媒介",
+            "發包分類",
+            "預製圖",
+            "Class",
+            "Size",
             "ParentArea",
             "ScopeRoot",
             "ResolutionStatus",
             "Resolved",
             "NeedsDecision",
         ]
-        cat_cols = [
+        base_cat_cols = [
             c for c in cols
             if df[c].nunique() < _CAT_THRESHOLD or c in _PINNED
         ]
+        cat_cols: list[str] = []
+        for c in _PINNED:
+            if c in base_cat_cols and c not in cat_cols:
+                cat_cols.append(c)
+        for c in base_cat_cols:
+            if c not in cat_cols:
+                cat_cols.append(c)
         if not cat_cols:
             cat_cols = cols[:8]
         self._v2_cat_cols = cat_cols
@@ -1037,8 +1059,13 @@ class JsonTabMixin:
         if result is None or result.export_rows == 0:
             self._v2_table.setRowCount(0)
             self._v2_table.setColumnCount(0)
+            self._v2_preview_caption.setText("資料預覽")
+            return
+        if result.group_summaries:
+            self._fill_group_summary_table(result)
             return
         sub = result.export_df
+        self._v2_preview_caption.setText("明細預覽")
 
         cols = [
             c for c in self._get_display_columns()
@@ -1075,6 +1102,45 @@ class JsonTabMixin:
         if total > _PREVIEW_MAX_ROWS:
             self.v2_status_label.setText(
                 f"（顯示前 {_PREVIEW_MAX_ROWS} 列 / 共 {total} 列）"
+            )
+
+    def _fill_group_summary_table(self, result):
+        """顯示分組後的 JSON 摘要，而不是讓使用者在明細列海裡找答案。"""
+        rows = result.group_summaries[:_PREVIEW_MAX_ROWS]
+        cols = [
+            result.group_key,
+            "3D身分證數",
+            "流水號數",
+            "資料列數",
+            "Scope數",
+            "Root數",
+            "ParentArea數",
+            "範例管線號",
+        ]
+        cols = [c for c in cols if any(c in row for row in rows)]
+        self._v2_preview_caption.setText(
+            f"分組摘要：依「{result.group_key}」聚合"
+        )
+
+        self._v2_table.setRowCount(len(rows))
+        self._v2_table.setColumnCount(len(cols))
+        self._v2_table.setHorizontalHeaderLabels(cols)
+
+        for r_idx, row in enumerate(rows):
+            for c_idx, col in enumerate(cols):
+                val = str(row.get(col, "")).strip()
+                item = QTableWidgetItem(val)
+                item.setForeground(Qt.GlobalColor.black)
+                if col == result.group_key:
+                    font = item.font()
+                    font.setBold(True)
+                    item.setFont(font)
+                self._v2_table.setItem(r_idx, c_idx, item)
+
+        self._v2_table.resizeColumnsToContents()
+        if len(result.group_summaries) > _PREVIEW_MAX_ROWS:
+            self.v2_status_label.setText(
+                f"（顯示前 {_PREVIEW_MAX_ROWS} 組 / 共 {len(result.group_summaries)} 組）"
             )
 
     def _on_preview_context_menu(self, pos):
@@ -1171,6 +1237,23 @@ class JsonTabMixin:
                 "color: #D97706; font-size: 11px; font-weight: 600;"
             )
         else:
+            if result.group_summaries:
+                preview = "、".join(
+                    f"{row.get(result.group_key, '')}={row.get('3D身分證數', 0)}"
+                    for row in result.group_summaries[:6]
+                )
+                suffix = (
+                    ""
+                    if len(result.group_summaries) <= 6
+                    else f"、... 共 {len(result.group_summaries)} 組"
+                )
+                self.v2_status_label.setText(
+                    f"分組依據：{result.group_key}；3D 身分證數：{preview}{suffix}"
+                )
+                self.v2_status_label.setStyleSheet(
+                    "color: #475569; font-size: 11px;"
+                )
+                return
             self.v2_status_label.setText(
                 f"輸出模式：{result.output_mode}，分組依據：{result.group_key}"
             )
