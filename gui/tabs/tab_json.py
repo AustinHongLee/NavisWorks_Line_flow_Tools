@@ -309,12 +309,14 @@ class JsonTabMixin:
         self._v2_lbl_blocked.setStyleSheet(
             "color: #64748B; font-size: 11px;"
         )
+        self._v2_lbl_blocked.setVisible(False)
         source_col.addWidget(self._v2_lbl_blocked)
 
         self._v2_lbl_scope = QLabel("範圍覆蓋：尚未計算")
         self._v2_lbl_scope.setStyleSheet(
             "color: #64748B; font-size: 11px;"
         )
+        self._v2_lbl_scope.setVisible(False)
         source_col.addWidget(self._v2_lbl_scope)
 
         tb_lay.addLayout(source_col, stretch=1)
@@ -335,6 +337,18 @@ class JsonTabMixin:
         btn_collision.setFixedHeight(28)
         btn_collision.clicked.connect(self._v2_open_collision_decisions)
         tb_lay.addWidget(btn_collision)
+
+        self._v2_chk_diagnostics = QCheckBox("診斷")
+        self._v2_chk_diagnostics.setToolTip(
+            "顯示攔截原因、範圍覆蓋率、JSON 原文與更多明細欄位。"
+        )
+        self._v2_chk_diagnostics.setStyleSheet(
+            "QCheckBox { color: #475569; font-size: 12px; }"
+        )
+        self._v2_chk_diagnostics.toggled.connect(
+            self._on_diagnostics_toggled
+        )
+        tb_lay.addWidget(self._v2_chk_diagnostics)
 
         lay.addWidget(toolbar)
         lay.addSpacing(6)
@@ -462,7 +476,7 @@ class JsonTabMixin:
 
         ctrl_lay.addWidget(select_box)
 
-        package_box = QGroupBox("2. 包裝 - 選好的列要怎麼變成 JSON？")
+        package_box = QGroupBox("2. 包裝 - 母資訊要包誰？")
         package_box.setStyleSheet(select_box.styleSheet())
         package_lay = QVBoxLayout(package_box)
         package_lay.setContentsMargins(8, 8, 8, 8)
@@ -499,7 +513,7 @@ class JsonTabMixin:
         # ── 分組欄位 ──
         gk_row = QHBoxLayout()
         gk_row.setSpacing(6)
-        lbl_gk = QLabel("分組欄位")
+        lbl_gk = QLabel("母資訊")
         lbl_gk.setStyleSheet(
             "font-size: 12px; font-weight: 600; color: #475569;"
         )
@@ -508,7 +522,7 @@ class JsonTabMixin:
         self._v2_cbo_group_key = QComboBox()
         self._v2_cbo_group_key.setFixedWidth(150)
         self._v2_cbo_group_key.setToolTip(
-            "只決定分組值；JSON selection-set 名稱欄位固定輸出為「群組」。"
+            "用這個欄位當母資訊；每個值會包住底下的 3D 身分證。"
         )
         self._v2_cbo_group_key.currentIndexChanged.connect(
             lambda: (
@@ -702,9 +716,10 @@ class JsonTabMixin:
             "QTabBar::tab:selected { background: #FFFFFF;"
             f" color: {C_PRIMARY}; font-weight: 700; }}"
         )
-        self._v2_preview_tabs.addTab(self._v2_summary_table, "分組摘要")
-        self._v2_preview_tabs.addTab(self._v2_json_preview, "JSON 預覽")
-        self._v2_preview_tabs.addTab(self._v2_table, "明細")
+        self._v2_preview_tabs.addTab(self._v2_summary_table, "包裹摘要")
+        self._v2_preview_tabs.addTab(self._v2_json_preview, "JSON 診斷")
+        self._v2_preview_tabs.addTab(self._v2_table, "包裹明細")
+        self._set_tab_visible(1, False)
 
         lay.addWidget(self._v2_preview_tabs, stretch=1)
         lay.addSpacing(6)
@@ -905,10 +920,12 @@ class JsonTabMixin:
         self._v2_lbl_blocked.setStyleSheet(
             "color: #64748B; font-size: 11px;"
         )
+        self._v2_lbl_blocked.setVisible(False)
         self._v2_lbl_scope.setText("範圍覆蓋：載入後依目前篩選計算")
         self._v2_lbl_scope.setStyleSheet(
             "color: #64748B; font-size: 11px;"
         )
+        self._v2_lbl_scope.setVisible(False)
 
         # 群組 toggle
         has_group = "群組" in cols
@@ -1091,6 +1108,24 @@ class JsonTabMixin:
     # 固定顯示欄位（Raw_3D_PipeCode 在最後）
     _PINNED_TAIL = ["Raw_3D_PipeCode"]
 
+    def _diagnostics_visible(self) -> bool:
+        return bool(
+            getattr(self, "_v2_chk_diagnostics", None)
+            and self._v2_chk_diagnostics.isChecked()
+        )
+
+    def _set_tab_visible(self, index: int, visible: bool):
+        if not hasattr(self, "_v2_preview_tabs"):
+            return
+        if hasattr(self._v2_preview_tabs, "setTabVisible"):
+            self._v2_preview_tabs.setTabVisible(index, visible)
+        else:
+            self._v2_preview_tabs.setTabEnabled(index, visible)
+
+    def _on_diagnostics_toggled(self):
+        self._refresh_preview_table()
+        self._v2_update_live_count()
+
     def _current_output_mode(self) -> str:
         """Return the user-facing output strategy as an internal label."""
         if getattr(self, "_v2_radio_flat", None) and self._v2_radio_flat.isChecked():
@@ -1141,7 +1176,21 @@ class JsonTabMixin:
                 filter_cols.append(c)
 
         if not filter_cols:
-            return avail  # 無篩選 → 顯示全部
+            if self._diagnostics_visible():
+                return avail
+            compact = [
+                c
+                for c in self._get_pinned_head()
+                + ["流水號", "Raw_3D_PipeCode"]
+                if c in avail
+            ]
+            seen: set[str] = set()
+            out: list[str] = []
+            for c in compact:
+                if c not in seen:
+                    out.append(c)
+                    seen.add(c)
+            return out
 
         # 組合：動態頭 + 篩選欄（去重）+ 固定尾
         seen: set[str] = set()
@@ -1218,23 +1267,25 @@ class JsonTabMixin:
             )
             self._v2_preview_caption.setText("預覽與匯出：沒有可匯出的資料")
             self._v2_preview_tabs.setTabEnabled(0, False)
-            self._v2_preview_tabs.setCurrentIndex(1)
+            self._set_tab_visible(1, self._diagnostics_visible())
+            self._v2_preview_tabs.setCurrentIndex(2)
             return
 
         self._fill_group_summary_table(result)
         self._fill_json_preview(result)
         self._fill_detail_table(result)
+        self._set_tab_visible(1, self._diagnostics_visible())
 
         if result.group_summaries:
             self._v2_preview_caption.setText(
-                f"預覽與匯出：依「{result.group_key}」分組，"
-                f"{result.group_count} 組 / {result.pipe_count} 筆 3D 身分證"
+                f"包裹摘要：母資訊 =「{result.group_key}」，"
+                f"{result.group_count} 包 / {result.pipe_count} 筆 3D 身分證"
             )
             self._v2_preview_tabs.setTabEnabled(0, True)
             self._v2_preview_tabs.setCurrentIndex(0)
         else:
             self._v2_preview_caption.setText(
-                f"明細預覽：{result.pipe_count} 筆 3D 身分證"
+                f"包裹明細：{result.pipe_count} 筆 3D 身分證"
             )
             self._v2_preview_tabs.setTabEnabled(0, False)
             self._v2_preview_tabs.setCurrentIndex(2)
@@ -1295,31 +1346,43 @@ class JsonTabMixin:
     def _fill_group_summary_table(self, result):
         """顯示分組後的 JSON 摘要，而不是讓使用者在明細列海裡找答案。"""
         rows = result.group_summaries[:_PREVIEW_MAX_ROWS]
-        cols = [
-            result.group_key,
-            "3D身分證數",
-            "流水號數",
-            "資料列數",
-            "Path覆蓋率",
-            "Root數",
-            "Area覆蓋率",
-            "範例管線號",
+        col_defs = [
+            ("母資訊", result.group_key),
+            ("包幾個 3D", "3D身分證數"),
+            ("包幾個流水號", "流水號數"),
+            ("包裹內容（範例）", "範例管線號"),
         ]
-        cols = [c for c in cols if any(c in row for row in rows)]
+        if self._diagnostics_visible():
+            col_defs = [
+                ("母資訊", result.group_key),
+                ("3D身分證數", "3D身分證數"),
+                ("流水號數", "流水號數"),
+                ("資料列數", "資料列數"),
+                ("Path覆蓋率", "Path覆蓋率"),
+                ("Root數", "Root數"),
+                ("Area覆蓋率", "Area覆蓋率"),
+                ("範例管線號", "範例管線號"),
+            ]
+        col_defs = [
+            (label, key)
+            for label, key in col_defs
+            if any(key in row for row in rows)
+        ]
+        headers = [label for label, _ in col_defs]
 
         self._v2_summary_table.blockSignals(True)
         self._v2_summary_table.setRowCount(len(rows))
-        self._v2_summary_table.setColumnCount(len(cols))
-        self._v2_summary_table.setHorizontalHeaderLabels(cols)
+        self._v2_summary_table.setColumnCount(len(headers))
+        self._v2_summary_table.setHorizontalHeaderLabels(headers)
 
         for r_idx, row in enumerate(rows):
             group_value = str(row.get(result.group_key, "")).strip()
-            for c_idx, col in enumerate(cols):
-                val = str(row.get(col, "")).strip()
+            for c_idx, (label, key) in enumerate(col_defs):
+                val = str(row.get(key, "")).strip()
                 item = QTableWidgetItem(val)
                 item.setForeground(Qt.GlobalColor.black)
                 item.setData(Qt.ItemDataRole.UserRole, group_value)
-                if col == result.group_key:
+                if key == result.group_key:
                     font = item.font()
                     font.setBold(True)
                     item.setFont(font)
@@ -1348,8 +1411,8 @@ class JsonTabMixin:
         self._fill_detail_table(result, subset_df=sub)
         self._v2_preview_tabs.setCurrentIndex(2)
         self._v2_preview_caption.setText(
-            f"明細預覽：{result.group_key} = {group_value}，"
-            f"{len(sub)} 列 / {result.pipe_count} 筆 3D 身分證（全體）"
+            f"包裹明細：母資訊「{group_value}」包了 "
+            f"{len(sub)} 列資料"
         )
 
     def _on_preview_context_menu(self, pos):
@@ -1408,8 +1471,25 @@ class JsonTabMixin:
         if result is None:
             return
 
+        diagnostics = self._diagnostics_visible()
         bb = result.blocked_breakdown or {}
         blocked = result.blocked_rows
+        if not diagnostics:
+            self._v2_lbl_scope.setVisible(False)
+            if blocked:
+                self._v2_lbl_blocked.setText(
+                    f"有 {blocked} 列未進 JSON；勾「診斷」可看原因。"
+                )
+                self._v2_lbl_blocked.setStyleSheet(
+                    "color: #D97706; font-size: 11px; font-weight: 600;"
+                )
+                self._v2_lbl_blocked.setVisible(True)
+            else:
+                self._v2_lbl_blocked.setVisible(False)
+            return
+
+        self._v2_lbl_blocked.setVisible(True)
+        self._v2_lbl_scope.setVisible(True)
         if blocked:
             bits = [
                 f"未解析 {int(bb.get('unresolved', 0))}",
@@ -1486,15 +1566,18 @@ class JsonTabMixin:
                 self._v2_btn_export.setText("  匯出單一檔  ")
             return
 
+        diagnostics = self._diagnostics_visible()
+        package_word = "包" if result.group_summaries else "筆"
         parts = [
-            f"✓ 可匯出 {result.export_rows} / {result.source_rows} 列",
-            f"{result.pipe_count} 筆管線",
-            f"{result.group_count} 組 JSON",
+            f"✓ {result.group_count} {package_word}",
+            f"包住 {result.pipe_count} 筆 3D 身分證",
         ]
-        if result.scope_count:
-            parts.append(f"{result.scope_count} 筆 scope")
-        if result.blocked_rows:
-            parts.append(f"已擋 {result.blocked_rows} 列")
+        if diagnostics:
+            parts.insert(0, f"可匯出 {result.export_rows} / {result.source_rows} 列")
+            if result.scope_count:
+                parts.append(f"{result.scope_count} 筆 scope")
+        elif result.blocked_rows:
+            parts.append(f"{result.blocked_rows} 列未匯出")
 
         self._v2_lbl_count.setText("  |  ".join(parts))
         self._v2_lbl_count.setStyleSheet(
@@ -1510,12 +1593,17 @@ class JsonTabMixin:
                 self._v2_btn_export.setText("  匯出單一檔  ")
         if result.blocked_rows:
             bb = result.blocked_breakdown or {}
-            self.v2_status_label.setText(
-                "預覽已套用安全檢查："
-                f"未解析 {int(bb.get('unresolved', 0))} / "
-                f"待決策 {int(bb.get('needs_decision', 0))} / "
-                f"缺 raw {int(bb.get('missing_raw', 0))}"
-            )
+            if diagnostics:
+                self.v2_status_label.setText(
+                    "預覽已套用安全檢查："
+                    f"未解析 {int(bb.get('unresolved', 0))} / "
+                    f"待決策 {int(bb.get('needs_decision', 0))} / "
+                    f"缺 raw {int(bb.get('missing_raw', 0))}"
+                )
+            else:
+                self.v2_status_label.setText(
+                    f"有 {result.blocked_rows} 列不會匯出；目前摘要只顯示會進 JSON 的包裹。"
+                )
             self.v2_status_label.setStyleSheet(
                 "color: #D97706; font-size: 11px; font-weight: 600;"
             )
@@ -1531,14 +1619,14 @@ class JsonTabMixin:
                     else f"、... 共 {len(result.group_summaries)} 組"
                 )
                 self.v2_status_label.setText(
-                    f"分組依據：{result.group_key}；3D 身分證數：{preview}{suffix}"
+                    f"母資訊：{result.group_key}；包裹數：{preview}{suffix}"
                 )
                 self.v2_status_label.setStyleSheet(
                     "color: #475569; font-size: 11px;"
                 )
                 return
             self.v2_status_label.setText(
-                f"輸出模式：{result.output_mode}，分組依據：{result.group_key}"
+                f"輸出模式：{result.output_mode}，母資訊：{result.group_key}"
             )
             self.v2_status_label.setStyleSheet(
                 "color: #475569; font-size: 11px;"
