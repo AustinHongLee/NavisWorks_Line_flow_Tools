@@ -111,7 +111,15 @@ def build_resolved_mapping(
     if "Raw_3D_PipeCode" not in df.columns:
         raise ValueError("iso_match 缺少必要欄位 Raw_3D_PipeCode")
 
-    for col in OUTPUT_COLUMNS:
+    output_columns = list(OUTPUT_COLUMNS)
+    for col in df.columns:
+        col_name = str(col).strip()
+        if not col_name or col_name.startswith("__"):
+            continue
+        if col_name not in output_columns:
+            output_columns.append(col_name)
+
+    for col in output_columns:
         if col not in df.columns:
             df[col] = ""
 
@@ -159,7 +167,7 @@ def build_resolved_mapping(
         axis=1,
     )
 
-    result = df[OUTPUT_COLUMNS].drop_duplicates(
+    result = df[output_columns].drop_duplicates(
         subset=[
             "Resolved",
             "ResolutionStatus",

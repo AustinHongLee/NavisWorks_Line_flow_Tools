@@ -463,6 +463,38 @@ class PipelineRegressionTests(unittest.TestCase):
         self.assertEqual(result.pipe_count, 1)
         self.assertEqual(result.group_count, 1)
 
+    def test_resolved_mapping_preserves_iso_source_classification_columns(self):
+        with self._tmpdir() as d:
+            iso_match = os.path.join(d, "iso_match.xlsx")
+            mapping = os.path.join(d, "resolved_mapping.csv")
+            pd.DataFrame(
+                [
+                    {
+                        "流水號": "16",
+                        "管線編號": "/LINE-A",
+                        "Raw_3D_PipeCode": "/LINE-A",
+                        "NeedsDecision": "0",
+                        "MatchType": "strict",
+                        "系統": "S11U",
+                        "保溫": "NO_INSU",
+                        "未來分類": "A-ZONE",
+                        "__line_norm": "internal",
+                    }
+                ]
+            ).to_excel(iso_match, index=False, sheet_name="結果")
+
+            build_resolved_mapping(iso_match, mapping)
+            result = pd.read_csv(mapping, dtype=str, encoding="utf-8-sig").fillna("")
+
+            self.assertIn("系統", result.columns)
+            self.assertIn("保溫", result.columns)
+            self.assertIn("未來分類", result.columns)
+            self.assertNotIn("__line_norm", result.columns)
+            row = result.iloc[0]
+            self.assertEqual(row["系統"], "S11U")
+            self.assertEqual(row["保溫"], "NO_INSU")
+            self.assertEqual(row["未來分類"], "A-ZONE")
+
     def test_resolved_mapping_keeps_distinct_pipe_node_paths(self):
         with self._tmpdir() as d:
             iso_match = os.path.join(d, "iso_match.xlsx")
