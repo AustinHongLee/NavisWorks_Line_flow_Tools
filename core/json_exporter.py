@@ -97,7 +97,7 @@ class JsonExporter:
                 if not raws:
                     continue
                 entry = {group_key: key_v, "管線號": raws}
-                scope = _build_scope_metadata(sub)
+                scope = _build_scope_metadata(sub, raws)
                 if scope:
                     entry["搜尋範圍"] = scope
                 entries.append(entry)
@@ -109,24 +109,64 @@ class JsonExporter:
             raws = CommonUtils.unique_preserve(sub_df["Raw_3D_PipeCode"].tolist())
             if not raws:
                 return []
-            return [{"管線號": r} for r in raws]
+            entries: List[dict] = []
+            for raw in raws:
+                raw_rows = sub_df[
+                    sub_df["Raw_3D_PipeCode"].astype(str).str.strip().eq(str(raw).strip())
+                ]
+                entry = {"管線號": r}
+                scope = _build_scope_metadata(raw_rows, [raw])
+                if scope:
+                    entry["搜尋範圍"] = scope
+                entries.append(entry)
+            return entries
 
-        def _build_scope_metadata(df_src: pd.DataFrame) -> dict:
-            """Export optional scope hints for Navisworks-side bounded search."""
-            scope: dict[str, list[str]] = {}
-            for col in ["ScopeRoot", "ParentArea", "PipeNodePath", "PipeNodeLevel"]:
-                if col not in df_src.columns:
+        def _scope_value(col: str, value: object):
+            text = str(value).strip()
+            if col == "PipeNodeLevel" and text.isdigit():
+                return int(text)
+            return text
+
+        def _build_scope_metadata(
+            df_src: pd.DataFrame,
+            raws: List[str],
+        ) -> List[dict]:
+            """Export per-pipe scope hints for Navisworks-side bounded search.
+
+            The importer can use the explicit ``管線號`` key to map each scope
+            object back to the matching value, avoiding positional guessing.
+            """
+            if df_src.empty or not raws:
+                return []
+            scope_cols = ["ScopeRoot", "ParentArea", "PipeNodePath", "PipeNodeLevel"]
+            present_cols = [c for c in scope_cols if c in df_src.columns]
+            if not present_cols:
+                return []
+
+            entries: List[dict] = []
+            seen: set[tuple] = set()
+            raw_series = df_src["Raw_3D_PipeCode"].astype(str).str.strip()
+            for raw in raws:
+                raw_text = str(raw).strip()
+                if not raw_text:
                     continue
-                values = CommonUtils.unique_preserve(
-                    [
-                        str(v).strip()
-                        for v in df_src[col].tolist()
-                        if str(v).strip()
-                    ]
-                )
-                if values:
-                    scope[col] = values
-            return scope
+                raw_rows = df_src[raw_series.eq(raw_text)]
+                if raw_rows.empty:
+                    continue
+                for _, row in raw_rows.iterrows():
+                    entry = {"管線號": raw_text}
+                    for col in present_cols:
+                        value = str(row.get(col, "")).strip()
+                        if value:
+                            entry[col] = _scope_value(col, value)
+                    if len(entry) <= 1:
+                        continue
+                    key = tuple((k, str(entry[k])) for k in sorted(entry.keys()))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    entries.append(entry)
+            return entries
 
         def _truthy_series(series: pd.Series) -> pd.Series:
             return series.astype(str).str.strip().str.lower().isin(
@@ -359,7 +399,7 @@ class JsonExporter:
                     )
                     continue
                 entry = {group_key: "ALL", "管線號": raws_all}
-                scope = _build_scope_metadata(sub)
+                scope = _build_scope_metadata(sub, raws_all)
                 if scope:
                     entry["搜尋範圍"] = scope
                 merged_entries = [entry]

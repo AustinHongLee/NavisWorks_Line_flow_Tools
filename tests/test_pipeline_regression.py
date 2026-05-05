@@ -291,7 +291,9 @@ class PipelineRegressionTests(unittest.TestCase):
                     {
                         "流水號": "1",
                         "管線號": ["/A-LINE"],
-                        "搜尋範圍": {"ParentArea": ["/A"]},
+                        "搜尋範圍": [
+                            {"管線號": "/A-LINE", "ParentArea": "/A"}
+                        ],
                     }
                 ],
             )
@@ -316,12 +318,16 @@ class PipelineRegressionTests(unittest.TestCase):
                     {
                         "流水號": "1",
                         "管線號": ["/A-LINE"],
-                        "搜尋範圍": {"ParentArea": ["/A"]},
+                        "搜尋範圍": [
+                            {"管線號": "/A-LINE", "ParentArea": "/A"}
+                        ],
                     },
                     {
                         "流水號": "2",
                         "管線號": ["/B-LINE-A"],
-                        "搜尋範圍": {"ParentArea": ["/A"]},
+                        "搜尋範圍": [
+                            {"管線號": "/B-LINE-A", "ParentArea": "/A"}
+                        ],
                     },
                 ],
             )
@@ -366,10 +372,24 @@ class PipelineRegressionTests(unittest.TestCase):
                 data[0]["管線號"],
                 ["/1-S11U-AP-US02", "/1-S11U-AP-US02/B1"],
             )
-            self.assertEqual(data[0]["搜尋範圍"]["ScopeRoot"], ["CHO_NO_INSU.RVM"])
             self.assertEqual(
-                data[0]["搜尋範圍"]["ParentArea"],
-                ["/HPS-PIPE", "/1-S11U-AP-US02"],
+                data[0]["搜尋範圍"],
+                [
+                    {
+                        "管線號": "/1-S11U-AP-US02",
+                        "ScopeRoot": "CHO_NO_INSU.RVM",
+                        "ParentArea": "/HPS-PIPE",
+                        "PipeNodePath": "HP6.nwd___CHO_NO_INSU.RVM___/HPS___/HPS-PIPE___/1-S11U-AP-US02",
+                        "PipeNodeLevel": 4,
+                    },
+                    {
+                        "管線號": "/1-S11U-AP-US02/B1",
+                        "ScopeRoot": "CHO_NO_INSU.RVM",
+                        "ParentArea": "/1-S11U-AP-US02",
+                        "PipeNodePath": "HP6.nwd___CHO_NO_INSU.RVM___/HPS___/HPS-PIPE___/1-S11U-AP-US02___/1-S11U-AP-US02/B1",
+                        "PipeNodeLevel": 5,
+                    },
+                ],
             )
 
     def test_resolved_mapping_keeps_distinct_pipe_node_paths(self):
