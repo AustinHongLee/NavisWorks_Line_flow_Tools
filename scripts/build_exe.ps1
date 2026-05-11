@@ -1,0 +1,146 @@
+param(
+    [switch]$SkipClean
+)
+
+$ErrorActionPreference = "Stop"
+$OutputEncoding = [System.Text.UTF8Encoding]::new()
+try {
+    [Console]::OutputEncoding = $OutputEncoding
+} catch {
+    # Some hosts do not allow changing console encoding; build output remains valid.
+}
+
+$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$SpecPath = Join-Path $RepoRoot "NavisWorks_Line_flow_Tools.spec"
+$VenvDir = Join-Path $RepoRoot ".venv"
+$PythonExe = Join-Path $VenvDir "Scripts\python.exe"
+$ExeName = "NavisWorks_Line_flow_Tools.exe"
+$ManifestName = "NavisWorks_Line_flow_Tools.manifest.json"
+$DistDir = Join-Path $RepoRoot "dist"
+$BuildDir = Join-Path $RepoRoot "build"
+$ExePath = Join-Path $DistDir $ExeName
+$ManifestPath = Join-Path $DistDir $ManifestName
+
+function Fail([string]$Message) {
+    Write-Host "[build_exe] ERROR: $Message" -ForegroundColor Red
+    exit 1
+}
+
+function Assert-RepoChild([string]$Path) {
+    $fullPath = [System.IO.Path]::GetFullPath($Path)
+    if (-not $fullPath.StartsWith($RepoRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        Fail "Refusing to touch path outside repo: $fullPath"
+    }
+    return $fullPath
+}
+
+function Run-Checked([string]$Label, [scriptblock]$Command) {
+    Write-Host "[build_exe] $Label"
+    & $Command
+    if ($LASTEXITCODE -ne 0) {
+        Fail "$Label failed with exit code $LASTEXITCODE"
+    }
+}
+
+Write-Host "[build_exe] RepoRoot = $RepoRoot"
+
+if (-not (Test-Path -LiteralPath $VenvDir -PathType Container)) {
+    Fail "Missing .venv. Create and prepare the project virtualenv first; this build script will not install it silently."
+}
+if (-not (Test-Path -LiteralPath $PythonExe -PathType Leaf)) {
+    Fail "Missing .venv Python: $PythonExe"
+}
+if (-not (Test-Path -LiteralPath $SpecPath -PathType Leaf)) {
+    Fail "Missing PyInstaller spec: $SpecPath"
+}
+
+$pythonVersion = ""
+try {
+    $pythonVersion = (& $PythonExe -c "import sys; print(sys.version.split()[0])" 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        Fail ".venv Python exists but cannot run. Output: $pythonVersion"
+    }
+} catch {
+    Fail ".venv Python exists but cannot run. $($_.Exception.Message)"
+}
+
+$pyinstallerVersion = ""
+try {
+    $pyinstallerVersion = (& $PythonExe -c "import PyInstaller; print(PyInstaller.__version__)" 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        Fail "PyInstaller is not importable from .venv. Install it in .venv first. Output: $pyinstallerVersion"
+    }
+} catch {
+    Fail "PyInstaller is not importable from .venv. Install it in .venv first. $($_.Exception.Message)"
+}
+
+if (-not $SkipClean) {
+    foreach ($path in @($BuildDir, $DistDir)) {
+        if (Test-Path -LiteralPath $path) {
+            $safePath = Assert-RepoChild $path
+            Write-Host "[build_exe] Removing $safePath"
+            Remove-Item -LiteralPath $safePath -Recurse -Force
+        }
+    }
+}
+
+Push-Location $RepoRoot
+try {
+    Run-Checked "PyInstaller $pyinstallerVersion onefile build" {
+        & $PythonExe -m PyInstaller --clean --noconfirm $SpecPath
+    }
+} finally {
+    Pop-Location
+}
+
+if (-not (Test-Path -LiteralPath $ExePath -PathType Leaf)) {
+    Fail "Build finished but EXE was not found: $ExePath"
+}
+
+$exeItem = Get-Item -LiteralPath $ExePath
+$hash = (Get-FileHash -LiteralPath $ExePath -Algorithm SHA256).Hash.ToLowerInvariant()
+
+$gitCommit = ""
+$gitBranch = ""
+$gitDirty = $true
+$sourceRepo = $RepoRoot
+try {
+    Push-Location $RepoRoot
+    $gitCommit = (git rev-parse HEAD 2>$null).Trim()
+    $gitBranch = (git rev-parse --abbrev-ref HEAD 2>$null).Trim()
+    $remote = (git config --get remote.origin.url 2>$null).Trim()
+    if ($remote) {
+        $sourceRepo = $remote
+    }
+    $gitDirty = [bool]((git status --porcelain 2>$null).Trim())
+} catch {
+    Write-Warning "[build_exe] Could not read git metadata: $($_.Exception.Message)"
+} finally {
+    Pop-Location
+}
+
+$manifest = [ordered]@{
+    exeName = $ExeName
+    exePath = $exeItem.FullName
+    builtAt = (Get-Date).ToUniversalTime().ToString("o")
+    sourceRepo = $sourceRepo
+    gitCommit = $gitCommit
+    gitBranch = $gitBranch
+    gitDirty = $gitDirty
+    fileSize = $exeItem.Length
+    sha256 = $hash
+    pythonVersion = [string]$pythonVersion
+    pyinstallerVersion = [string]$pyinstallerVersion
+}
+
+if (-not (Test-Path -LiteralPath $DistDir -PathType Container)) {
+    New-Item -ItemType Directory -Path $DistDir | Out-Null
+}
+$manifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $ManifestPath -Encoding UTF8
+
+Write-Host "[build_exe] OK"
+Write-Host "[build_exe] EXE      = $($exeItem.FullName)"
+Write-Host "[build_exe] Size     = $($exeItem.Length) bytes"
+Write-Host "[build_exe] Modified = $($exeItem.LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss'))"
+Write-Host "[build_exe] SHA256   = $hash"
+Write-Host "[build_exe] Manifest = $ManifestPath"

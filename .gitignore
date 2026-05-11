@@ -6,6 +6,7 @@ __pycache__/
 dist/
 build/
 *.spec
+!NavisWorks_Line_flow_Tools.spec
 
 # Virtual environment
 .venv/
