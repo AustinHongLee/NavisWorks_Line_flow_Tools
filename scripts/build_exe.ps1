@@ -42,6 +42,14 @@ function Run-Checked([string]$Label, [scriptblock]$Command) {
     }
 }
 
+function Read-GitValue([string[]]$ArgsList) {
+    $value = & git @ArgsList 2>$null
+    if ($LASTEXITCODE -ne 0 -or $null -eq $value) {
+        return ""
+    }
+    return (($value | Select-Object -First 1).ToString()).Trim()
+}
+
 Write-Host "[build_exe] RepoRoot = $RepoRoot"
 
 if (-not (Test-Path -LiteralPath $VenvDir -PathType Container)) {
@@ -106,13 +114,14 @@ $gitDirty = $true
 $sourceRepo = $RepoRoot
 try {
     Push-Location $RepoRoot
-    $gitCommit = (git rev-parse HEAD 2>$null).Trim()
-    $gitBranch = (git rev-parse --abbrev-ref HEAD 2>$null).Trim()
-    $remote = (git config --get remote.origin.url 2>$null).Trim()
+    $gitCommit = Read-GitValue @("rev-parse", "HEAD")
+    $gitBranch = Read-GitValue @("rev-parse", "--abbrev-ref", "HEAD")
+    $remote = Read-GitValue @("config", "--get", "remote.origin.url")
     if ($remote) {
         $sourceRepo = $remote
     }
-    $gitDirty = [bool]((git status --porcelain 2>$null).Trim())
+    $status = & git status --porcelain 2>$null
+    $gitDirty = $LASTEXITCODE -eq 0 -and [bool](($status -join "`n").Trim())
 } catch {
     Write-Warning "[build_exe] Could not read git metadata: $($_.Exception.Message)"
 } finally {
