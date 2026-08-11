@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from core.release_update import CURRENT_VERSION
+
 
 # ============================================================
 #  全體 Token（母 GUI 統一管控）
@@ -134,7 +136,7 @@ class Theme:
 DEFAULT_THEME = Theme()
 
 # ── 應用程式常數 ──
-APP_TITLE = "管線流程工具 v4"
+APP_TITLE = f"管線流程工具 v{CURRENT_VERSION.split('.', 1)[0]}"
 WINDOW_W, WINDOW_H = 1200, 900
 SIDEBAR_W = DEFAULT_THEME.g.sidebar_width
 

@@ -48,6 +48,17 @@ QLabel#sidebarTitle {{
 QLabel#sidebarVersion {{
     color: {g.sidebar_text}; font-size: {g.font_size_xs};
 }}
+QLabel#sidebarUpdateStatus {{
+    color: #94A3B8; font-size: {g.font_size_xs};
+    min-height: 14px; background: transparent;
+}}
+QLabel#sidebarUpdateStatus[update-state="checking"] {{ color: #CBD5E1; }}
+QLabel#sidebarUpdateStatus[update-state="current"] {{ color: #86EFAC; }}
+QLabel#sidebarUpdateStatus[update-state="available"] {{
+    color: #FDE68A; font-weight: 700;
+}}
+QLabel#sidebarUpdateStatus[update-state="ahead"] {{ color: #67E8F9; }}
+QLabel#sidebarUpdateStatus[update-state="unknown"] {{ color: #94A3B8; }}
 QLabel#sidebarBrandIcon {{
     color: {g.sidebar_title}; background: #F8FAFC;
     border: 1px solid #CBD5E1; border-radius: 11px;

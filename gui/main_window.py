@@ -12,11 +12,12 @@ import os
 import hashlib
 import shutil
 from datetime import datetime
+from html import escape
 from pathlib import Path
 
 import pandas as pd
-from PyQt6.QtCore import QCoreApplication, QSettings, QSize, Qt
-from PyQt6.QtGui import QKeySequence, QPixmap, QShortcut
+from PyQt6.QtCore import QCoreApplication, QSettings, QSize, QTimer, QUrl, Qt
+from PyQt6.QtGui import QDesktopServices, QKeySequence, QPixmap, QShortcut
 from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -47,6 +48,7 @@ from gui.dialogs.iso_setup_dialog import IsoSetupDialog
 from gui.tabs.tab_pipeline import PipelineTabMixin
 from gui.tabs.tab_json import JsonTabMixin
 from gui.tabs.tab_investigation import InvestigationTabMixin
+from core.release_update import CURRENT_VERSION, compare_versions
 
 
 _NAV_ITEMS = [
@@ -113,6 +115,9 @@ class MainWindow(QMainWindow, PipelineTabMixin, JsonTabMixin, InvestigationTabMi
         self._last_project_display_dir = ""
         self._pending_collision_groups = 0
         self._project_continuity = None
+        self._release_checker = None
+        self._release_check_timer = None
+        self._latest_release_url = ""
         self._settings = (
             QSettings()
             if QCoreApplication.applicationName() == "PipelineOps"
@@ -180,6 +185,7 @@ class MainWindow(QMainWindow, PipelineTabMixin, JsonTabMixin, InvestigationTabMi
         # 初始狀態
         self._update_file_status()
         self._refresh_workbench_header()
+        self._schedule_release_check()
 
         # Navis 模式：延遲啟動設定流程
         if self._navis_dlldir and self._navis_first_try:
@@ -210,9 +216,153 @@ class MainWindow(QMainWindow, PipelineTabMixin, JsonTabMixin, InvestigationTabMi
     def shutdown(self) -> None:
         """Idempotently release Qt effects before QApplication teardown."""
 
+        release_timer = getattr(self, "_release_check_timer", None)
+        if release_timer is not None:
+            release_timer.stop()
+        release_checker = getattr(self, "_release_checker", None)
+        if release_checker is not None:
+            release_checker.cancel()
         motion = getattr(self, "_button_motion", None)
         if motion is not None:
             motion.stop()
+
+    def _schedule_release_check(self) -> None:
+        """Start the silent online check only in the real desktop app."""
+
+        app = QCoreApplication.instance()
+        disabled = os.environ.get(
+            "PIPELINE_OPS_DISABLE_UPDATE_CHECK", ""
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        if (
+            app is None
+            or app.applicationName() != "PipelineOps"
+            or bool(app.property("skipReleaseCheck"))
+            or disabled
+        ):
+            return
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.setInterval(1_800)
+        timer.timeout.connect(self._start_release_check)
+        self._release_check_timer = timer
+        timer.start()
+
+    def _start_release_check(self) -> None:
+        if self._release_checker is not None:
+            return
+        # Delay this import until after the first frame; QtNetwork and its TLS
+        # plugins should never compete with visible startup.
+        from gui.release_update_checker import ReleaseUpdateChecker
+
+        checker = ReleaseUpdateChecker(
+            settings=self._settings or QSettings(),
+            parent=self,
+        )
+        checker.release_ready.connect(self._apply_release_update)
+        checker.check_failed.connect(self._on_release_check_failed)
+        checker.checking_changed.connect(self._on_release_checking_changed)
+        self._release_checker = checker
+        checker.start()
+
+    def _on_release_checking_changed(self, checking: bool) -> None:
+        if checking and str(
+            self.lbl_update_status.property("update-state") or ""
+        ) in {"unknown", "checking"}:
+            self._set_release_status(
+                "checking",
+                f"v{CURRENT_VERSION} 檢查",
+                "正在背景確認 GitHub 最新正式版本。",
+            )
+
+    def _on_release_check_failed(self, _reason: str) -> None:
+        state = str(
+            self.lbl_update_status.property("update-state") or ""
+        )
+        if state not in {"current", "available", "ahead"}:
+            self._set_release_status(
+                "unknown",
+                f"v{CURRENT_VERSION}",
+                "尚未完成線上版本確認；不影響離線操作。",
+            )
+
+    def _apply_release_update(self, release) -> None:
+        gap = compare_versions(CURRENT_VERSION, release.version)
+        latest = gap.latest or release.version
+        if gap.kind in {"update_major", "update_minor", "update_patch"}:
+            detail = {
+                "update_major": "主版本更新",
+                "update_minor": "功能更新",
+                "update_patch": "修補更新",
+            }[gap.kind]
+            self._latest_release_url = release.url
+            self._set_release_status(
+                "available",
+                f"新版 {latest}",
+                f"{detail}：目前 v{CURRENT_VERSION}，最新 v{latest}。"
+                "點擊查看 Release；不會自動下載或安裝。",
+                link_url=release.url,
+            )
+        elif gap.kind == "current":
+            self._latest_release_url = ""
+            self._set_release_status(
+                "current",
+                f"v{CURRENT_VERSION} 最新",
+                f"已與 GitHub 最新正式 Release v{latest} 一致。",
+            )
+        elif gap.kind == "ahead":
+            self._latest_release_url = ""
+            self._set_release_status(
+                "ahead",
+                f"v{CURRENT_VERSION} 預覽",
+                f"本機版本比 GitHub 最新正式 Release v{latest} 新。",
+            )
+        else:
+            self._on_release_check_failed("invalid-version")
+
+    def _set_release_status(
+        self,
+        state: str,
+        text: str,
+        tooltip: str,
+        *,
+        link_url: str = "",
+    ) -> None:
+        label = self.lbl_update_status
+        label.setProperty("update-state", state)
+        label.setToolTip(tooltip)
+        if link_url:
+            label.setTextFormat(Qt.TextFormat.RichText)
+            label.setText(
+                f'<a href="{escape(link_url, quote=True)}" '
+                'style="color:#FDE68A;text-decoration:none;">'
+                f"{escape(text)} ↗</a>"
+            )
+            label.setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            label.setTextFormat(Qt.TextFormat.PlainText)
+            label.setText(text)
+            label.setCursor(Qt.CursorShape.ArrowCursor)
+        style = label.style()
+        style.unpolish(label)
+        style.polish(label)
+        label.update()
+
+    def _on_release_link_activated(self, href: str) -> None:
+        if (
+            str(self.lbl_update_status.property("update-state"))
+            != "available"
+            or href != self._latest_release_url
+        ):
+            return
+        url = QUrl(href)
+        if (
+            url.scheme().lower() == "https"
+            and url.host().lower() == "github.com"
+            and url.path().startswith(
+                "/AustinHongLee/NavisWorks_Line_flow_Tools/releases/"
+            )
+        ):
+            QDesktopServices.openUrl(url)
 
     def _build_workbench_header(self) -> QFrame:
         header = QFrame()
@@ -904,6 +1054,23 @@ class MainWindow(QMainWindow, PipelineTabMixin, JsonTabMixin, InvestigationTabMi
         ver = QLabel("Intelligent Engineering")
         ver.setObjectName("sidebarVersion")
         brand_copy.addWidget(ver)
+        self.lbl_update_status = QLabel(f"v{CURRENT_VERSION}")
+        self.lbl_update_status.setObjectName("sidebarUpdateStatus")
+        self.lbl_update_status.setProperty("update-state", "unknown")
+        self.lbl_update_status.setTextFormat(Qt.TextFormat.PlainText)
+        self.lbl_update_status.setTextInteractionFlags(
+            Qt.TextInteractionFlag.LinksAccessibleByMouse
+            | Qt.TextInteractionFlag.LinksAccessibleByKeyboard
+        )
+        self.lbl_update_status.setOpenExternalLinks(False)
+        self.lbl_update_status.setToolTip(
+            "有網路時會在背景確認 GitHub 最新正式版本。"
+        )
+        self.lbl_update_status.setAccessibleName("應用程式版本與更新狀態")
+        self.lbl_update_status.linkActivated.connect(
+            self._on_release_link_activated
+        )
+        brand_copy.addWidget(self.lbl_update_status)
         brand_row.addLayout(brand_copy, stretch=1)
         lay.addLayout(brand_row)
         lay.addSpacing(12)

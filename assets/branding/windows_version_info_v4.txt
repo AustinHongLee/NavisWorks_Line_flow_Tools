@@ -1,7 +1,7 @@
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(4, 0, 0, 0),
-    prodvers=(4, 0, 0, 0),
+    filevers=(4, 1, 0, 0),
+    prodvers=(4, 1, 0, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -16,12 +16,12 @@ VSVersionInfo(
         [
           StringStruct('CompanyName', 'Intelligent Engineering Co., Ltd.'),
           StringStruct('FileDescription', '管線流程工具'),
-          StringStruct('FileVersion', '4.0.0'),
+          StringStruct('FileVersion', '4.1.0'),
           StringStruct('InternalName', 'NavisWorks_Line_flow_Tools'),
           StringStruct('LegalCopyright', 'Copyright © 2026 Intelligent Engineering Co., Ltd.'),
           StringStruct('OriginalFilename', 'NavisWorks_Line_flow_Tools.exe'),
           StringStruct('ProductName', '管線流程工具'),
-          StringStruct('ProductVersion', '4.0.0')
+          StringStruct('ProductVersion', '4.1.0')
         ]
       )
     ]),

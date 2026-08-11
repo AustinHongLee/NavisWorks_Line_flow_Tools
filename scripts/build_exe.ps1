@@ -16,7 +16,7 @@ $IconPngPath = Join-Path $RepoRoot "assets\branding\ie_mark_v2.png"
 $IconIcoPath = Join-Path $RepoRoot "assets\branding\pipeline_ops_v2.ico"
 $SplashPngPath = Join-Path $RepoRoot "assets\branding\startup_splash_v2.png"
 $VersionInfoPath = Join-Path $RepoRoot "assets\branding\windows_version_info_v4.txt"
-$AppVersion = "4.0.0"
+$AppVersion = ""
 $VenvDir = Join-Path $RepoRoot ".venv"
 $PythonExe = Join-Path $VenvDir "Scripts\python.exe"
 $ExeName = "NavisWorks_Line_flow_Tools.exe"
@@ -87,6 +87,38 @@ try {
     }
 } catch {
     Fail ".venv Python exists but cannot run. $($_.Exception.Message)"
+}
+
+try {
+    $versionOutput = $null
+    $versionExitCode = 1
+    Push-Location $RepoRoot
+    try {
+        $versionOutput = & $PythonExe -c "from core.release_update import CURRENT_VERSION; print(CURRENT_VERSION)" 2>&1
+        $versionExitCode = $LASTEXITCODE
+    } finally {
+        Pop-Location
+    }
+    $AppVersion = ([string]($versionOutput | Select-Object -First 1)).Trim()
+    if ($versionExitCode -ne 0 -or $AppVersion -notmatch '^\d+\.\d+\.\d+$') {
+        Fail "Invalid application version from core.release_update: $AppVersion"
+    }
+} catch {
+    Fail "Could not read application version. $($_.Exception.Message)"
+}
+
+$versionParts = $AppVersion.Split('.')
+$versionTuple = "($($versionParts[0]), $($versionParts[1]), $($versionParts[2]), 0)"
+$versionInfoText = Get-Content -LiteralPath $VersionInfoPath -Raw
+foreach ($expected in @(
+    "filevers=$versionTuple",
+    "prodvers=$versionTuple",
+    "StringStruct('FileVersion', '$AppVersion')",
+    "StringStruct('ProductVersion', '$AppVersion')"
+)) {
+    if (-not $versionInfoText.Contains($expected)) {
+        Fail "Windows version resource is out of sync with app version $AppVersion"
+    }
 }
 
 $pyinstallerVersion = ""
@@ -204,7 +236,15 @@ $manifest = [ordered]@{
 if (-not (Test-Path -LiteralPath $DistDir -PathType Container)) {
     New-Item -ItemType Directory -Path $DistDir | Out-Null
 }
-$manifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $ManifestPath -Encoding UTF8
+$manifestJson = $manifest | ConvertTo-Json -Depth 4
+# Windows PowerShell 5.1 writes a BOM for ``-Encoding UTF8``.  Use the .NET
+# encoder explicitly so Release manifests are identical across PowerShell
+# editions and remain readable by strict JSON clients.
+[System.IO.File]::WriteAllText(
+    $ManifestPath,
+    $manifestJson,
+    [System.Text.UTF8Encoding]::new($false)
+)
 
 Write-Host "[build_exe] OK"
 Write-Host "[build_exe] EXE      = $($exeItem.FullName)"
