@@ -12,6 +12,11 @@ try {
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $SpecPath = Join-Path $RepoRoot "NavisWorks_Line_flow_Tools.spec"
+$IconPngPath = Join-Path $RepoRoot "assets\branding\ie_mark_v2.png"
+$IconIcoPath = Join-Path $RepoRoot "assets\branding\pipeline_ops_v2.ico"
+$SplashPngPath = Join-Path $RepoRoot "assets\branding\startup_splash_v2.png"
+$VersionInfoPath = Join-Path $RepoRoot "assets\branding\windows_version_info_v4.txt"
+$AppVersion = "4.0.0"
 $VenvDir = Join-Path $RepoRoot ".venv"
 $PythonExe = Join-Path $VenvDir "Scripts\python.exe"
 $ExeName = "NavisWorks_Line_flow_Tools.exe"
@@ -61,6 +66,18 @@ if (-not (Test-Path -LiteralPath $PythonExe -PathType Leaf)) {
 if (-not (Test-Path -LiteralPath $SpecPath -PathType Leaf)) {
     Fail "Missing PyInstaller spec: $SpecPath"
 }
+if (-not (Test-Path -LiteralPath $IconPngPath -PathType Leaf)) {
+    Fail "Missing application icon PNG: $IconPngPath"
+}
+if (-not (Test-Path -LiteralPath $IconIcoPath -PathType Leaf)) {
+    Fail "Missing application icon ICO: $IconIcoPath"
+}
+if (-not (Test-Path -LiteralPath $SplashPngPath -PathType Leaf)) {
+    Fail "Missing startup splash PNG: $SplashPngPath"
+}
+if (-not (Test-Path -LiteralPath $VersionInfoPath -PathType Leaf)) {
+    Fail "Missing Windows version resource: $VersionInfoPath"
+}
 
 $pythonVersion = ""
 try {
@@ -105,6 +122,47 @@ if (-not (Test-Path -LiteralPath $ExePath -PathType Leaf)) {
     Fail "Build finished but EXE was not found: $ExePath"
 }
 
+# Windows GUI executables return control immediately when invoked with `&`.
+# Start-Process + WaitForExit performs a real packaged lifecycle check.
+$previousQpaPlatform = $env:QT_QPA_PLATFORM
+$previousSuppressSplash = $env:PYINSTALLER_SUPPRESS_SPLASH_SCREEN
+$smokeWatch = [System.Diagnostics.Stopwatch]::StartNew()
+try {
+    $env:QT_QPA_PLATFORM = "offscreen"
+    # The smoke test must stay invisible on the operator's desktop.  The
+    # bootloader splash has its own Tk window and is independent of Qt.
+    $env:PYINSTALLER_SUPPRESS_SPLASH_SCREEN = "1"
+    $smokeProcess = Start-Process `
+        -FilePath $ExePath `
+        -ArgumentList @("--smoke-test") `
+        -WorkingDirectory $RepoRoot `
+        -WindowStyle Hidden `
+        -PassThru
+    if (-not $smokeProcess.WaitForExit(45000)) {
+        try { $smokeProcess.Kill($true) } catch {}
+        Fail "Packaged smoke test timed out after 45 seconds"
+    }
+    $smokeProcess.WaitForExit()
+    if ($smokeProcess.ExitCode -ne 0) {
+        Fail "Packaged smoke test failed with exit code $($smokeProcess.ExitCode)"
+    }
+} finally {
+    $smokeWatch.Stop()
+    if ($null -eq $previousQpaPlatform) {
+        Remove-Item Env:QT_QPA_PLATFORM -ErrorAction SilentlyContinue
+    } else {
+        $env:QT_QPA_PLATFORM = $previousQpaPlatform
+    }
+    if ($null -eq $previousSuppressSplash) {
+        Remove-Item Env:PYINSTALLER_SUPPRESS_SPLASH_SCREEN -ErrorAction SilentlyContinue
+    } else {
+        $env:PYINSTALLER_SUPPRESS_SPLASH_SCREEN = $previousSuppressSplash
+    }
+}
+Write-Host (
+    "[build_exe] Packaged smoke OK ({0:N2}s)" -f $smokeWatch.Elapsed.TotalSeconds
+)
+
 $exeItem = Get-Item -LiteralPath $ExePath
 $hash = (Get-FileHash -LiteralPath $ExePath -Algorithm SHA256).Hash.ToLowerInvariant()
 
@@ -129,8 +187,9 @@ try {
 }
 
 $manifest = [ordered]@{
+    appVersion = $AppVersion
     exeName = $ExeName
-    exePath = $exeItem.FullName
+    exePath = $ExeName
     builtAt = (Get-Date).ToUniversalTime().ToString("o")
     sourceRepo = $sourceRepo
     gitCommit = $gitCommit

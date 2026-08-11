@@ -1,12 +1,23 @@
 # -*- coding: utf-8 -*-
-"""gui — PyQt6 GUI 套件。
+"""Public GUI exports without paying MainWindow's import cost up front."""
+from __future__ import annotations
 
-重新匯出常用介面供外部直接 ``from gui import ...``。
-"""
+from typing import TYPE_CHECKING
 
 from gui.theme import Theme, DEFAULT_THEME
 from gui.stylesheet import build_stylesheet
-from gui.main_window import MainWindow
+
+if TYPE_CHECKING:
+    from gui.main_window import MainWindow
+
+
+def __getattr__(name: str):
+    if name == "MainWindow":
+        from gui.main_window import MainWindow
+
+        globals()[name] = MainWindow
+        return MainWindow
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
     "Theme",

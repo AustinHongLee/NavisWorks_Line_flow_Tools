@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+import json
 import re
 from collections import Counter
 from typing import Callable, Dict, List, Optional, Tuple
@@ -270,7 +271,14 @@ class PipelineExtractor:
         first_try_trace_path: Optional[str] = None,
         write_candidates: bool = False,
         candidates_path: Optional[str] = None,
+        log_fn: Optional[Callable[[str], None]] = None,
     ) -> int:
+        def _log(msg: str) -> None:
+            if log_fn is not None:
+                log_fn(msg)
+            else:
+                print(msg)
+
         if not os.path.exists(input_csv):
             raise FileNotFoundError(f"[Step1] 找不到輸入檔 First_try CSV：{input_csv}")
 
@@ -312,6 +320,30 @@ class PipelineExtractor:
             raw_df["PipelineId"] = ""
         raw_df = raw_df.fillna("")
         raw_df["__source_row_idx"] = [str(i + 1) for i in range(len(raw_df))]
+        _log(
+            "[Step1] First_try 讀取完成："
+            f"rows={len(raw_df)}, columns={list(raw_df.columns)}"
+        )
+        _log(
+            "[Step1] 掃描設定："
+            f"scan_mode={scan_mode}, id_level={id_level}, "
+            f"filter_key='{filter_key or ''}', sep='{self.sep}', "
+            f"raw_prefix='{self.raw_prefix}'"
+        )
+        if "Level" in raw_df.columns:
+            level_counts = raw_df["Level"].astype(str).str.strip().value_counts()
+            _log(
+                "[Step1] Level 分布（前 8）："
+                + str(level_counts.head(8).to_dict())
+            )
+        for sample_col in ["DisplayName", "PipelineId"]:
+            if sample_col in raw_df.columns:
+                samples = [
+                    str(v).strip()
+                    for v in raw_df[sample_col].tolist()
+                    if str(v).strip()
+                ][:5]
+                _log(f"[Step1] {sample_col} sample：{samples}")
 
         known_iso_keys: set[str] = set()
         if iso_list_path and os.path.exists(iso_list_path):
@@ -321,8 +353,17 @@ class PipelineExtractor:
                     sheet_name=iso_sheet_name,
                     pipe_col_override=pipe_col_override,
                 )
-            except Exception:
+                _log(
+                    "[Step1] ISO 白名單載入："
+                    f"{len(known_iso_keys)} keys "
+                    f"(sheet={iso_sheet_name or 'auto'}, "
+                    f"pipe_col={pipe_col_override or 'auto'})"
+                )
+            except Exception as exc:
                 known_iso_keys = set()
+                _log(f"[Step1] ISO 白名單載入失敗，改用純 3D 辨識：{exc}")
+        else:
+            _log("[Step1] 未指定 ISO 白名單，改用純 3D 辨識。")
 
         resolver = IdentityResolver(
             sep=self.sep,
@@ -332,11 +373,30 @@ class PipelineExtractor:
         recall_engine = IsoRecallEngine(known_iso_keys)
 
         def _attach_identity_columns(df_src: pd.DataFrame) -> pd.DataFrame:
-            resolved = df_src.apply(
-                resolver.resolve,
-                axis=1,
-                result_type="expand",
-            )
+            if df_src.empty:
+                resolved = df_src.apply(
+                    resolver.resolve,
+                    axis=1,
+                    result_type="expand",
+                )
+            else:
+                resolved_parts: list[pd.DataFrame] = []
+                total = len(df_src)
+                chunk_size = 5000
+                for start in range(0, total, chunk_size):
+                    stop = min(start + chunk_size, total)
+                    resolved_parts.append(
+                        df_src.iloc[start:stop].apply(
+                            resolver.resolve,
+                            axis=1,
+                            result_type="expand",
+                        )
+                    )
+                    _log(
+                        "[Step1] 身份解析進度："
+                        f"已處理 {stop}/{total} 列"
+                    )
+                resolved = pd.concat(resolved_parts).sort_index()
             for col in [
                 "Raw_3D_PipeCode",
                 "ISO_Match_Key",
@@ -494,6 +554,9 @@ class PipelineExtractor:
                                 "iso_candidate": "",
                                 "matched_terms": "",
                                 "missing_terms": "",
+                                "evidence_json": "",
+                                "auto_safe": "",
+                                "reason_codes": "",
                                 "review_status": (
                                     "auto_identity"
                                     if source_idx in included_source
@@ -530,11 +593,22 @@ class PipelineExtractor:
                                 "iso_candidate": cand.iso_key,
                                 "matched_terms": ",".join(cand.matched_terms),
                                 "missing_terms": ",".join(cand.missing_terms[:8]),
+                                "evidence_json": json.dumps(
+                                    cand.evidence,
+                                    ensure_ascii=False,
+                                    sort_keys=True,
+                                    separators=(",", ":"),
+                                ),
+                                "auto_safe": "1" if cand.auto_safe else "0",
+                                "reason_codes": ",".join(cand.reason_codes),
                                 "review_status": "needs_review",
-                                "Path": scan_row.get("Path", ""),
+                                "Path": cand.path or scan_row.get("Path", ""),
                                 "DisplayName": scan_row.get("DisplayName", ""),
-                                "Level": scan_row.get("Level", ""),
+                                "Level": cand.level or scan_row.get("Level", ""),
                                 "PipelineId": scan_row.get("PipelineId", ""),
+                                "PipeNodePath": cand.pipe_node_path,
+                                "ScopeRoot": cand.scope_root,
+                                "ParentArea": cand.parent_area,
                             }
                         )
                 pd.DataFrame(
@@ -554,11 +628,17 @@ class PipelineExtractor:
                         "iso_candidate",
                         "matched_terms",
                         "missing_terms",
+                        "evidence_json",
+                        "auto_safe",
+                        "reason_codes",
                         "review_status",
                         "Path",
                         "DisplayName",
                         "Level",
                         "PipelineId",
+                        "PipeNodePath",
+                        "ScopeRoot",
+                        "ParentArea",
                     ],
                 ).to_csv(
                     _candidates_path(),
@@ -582,14 +662,114 @@ class PipelineExtractor:
                 df_src[col] = contexts[col].astype(str) if col in contexts else ""
             return df_src
 
+        def _nonempty_values(df_src: pd.DataFrame, col: str, limit: int = 5) -> list[str]:
+            if col not in df_src.columns:
+                return []
+            result: list[str] = []
+            for value in df_src[col].tolist():
+                text = str(value).strip()
+                if text and text not in result:
+                    result.append(text)
+                if len(result) >= limit:
+                    break
+            return result
+
+        def _log_identity_summary(
+            label: str,
+            scan_df: pd.DataFrame,
+            included_df: pd.DataFrame,
+        ) -> None:
+            _log(
+                f"[Step1] {label} 掃描結果："
+                f"掃描 {len(scan_df)} 列，抓到 {len(included_df)} 列，"
+                f"未抓到 {max(len(scan_df) - len(included_df), 0)} 列"
+            )
+            if scan_df.empty:
+                _log("[Step1] 掃描範圍是空的，請檢查 scan_mode / id_level / filter_key。")
+                return
+
+            if "MatchSource" in scan_df.columns:
+                sources = (
+                    scan_df["MatchSource"]
+                    .fillna("")
+                    .astype(str)
+                    .str.strip()
+                    .replace("", "(empty)")
+                    .value_counts()
+                    .head(8)
+                    .to_dict()
+                )
+                _log(f"[Step1] MatchSource 分布：{sources}")
+
+            if "CandidateCount" in scan_df.columns:
+                candidate_counts = pd.to_numeric(
+                    scan_df["CandidateCount"],
+                    errors="coerce",
+                ).fillna(0)
+                _log(
+                    "[Step1] 身份候選統計："
+                    f"有候選列={int((candidate_counts > 0).sum())}, "
+                    f"最大候選數={int(candidate_counts.max()) if len(candidate_counts) else 0}"
+                )
+
+            matched_samples = []
+            for _, row in included_df.head(5).iterrows():
+                matched_samples.append(
+                    f"{row.get('Raw_3D_PipeCode', '')} -> "
+                    f"{row.get('ISO_Match_Key', '')} "
+                    f"({row.get('MatchSource', '')})"
+                )
+            if matched_samples:
+                _log(f"[Step1] 已抓到 sample：{matched_samples}")
+
+            unmatched = scan_df[
+                scan_df.get("ISO_Match_Key", pd.Series([], dtype=str))
+                .astype(str)
+                .str.strip()
+                .eq("")
+            ].head(5)
+            if not unmatched.empty:
+                samples = []
+                for _, row in unmatched.iterrows():
+                    reason, detail = _classify_exclusion(row, True)
+                    samples.append(
+                        "Level={level}, DisplayName='{display}', "
+                        "PipelineId='{pid}', reason={reason}, detail={detail}".format(
+                            level=row.get("Level", ""),
+                            display=str(row.get("DisplayName", ""))[:80],
+                            pid=str(row.get("PipelineId", ""))[:80],
+                            reason=reason,
+                            detail=detail,
+                        )
+                    )
+                _log(f"[Step1] 未抓到 sample：{samples}")
+
+            if included_df.empty:
+                _log(
+                    "[Step1][WARN] 本次沒有抓到任何 3D 管線身份。"
+                    "後續 Step3 沒有 3D key 可比對，ISO 會全部變成未配對。"
+                )
+                _log(
+                    "[Step1][HINT] 優先檢查：First_try 是否有 PipelineId、"
+                    "目前 scan_mode/id_level 是否掃到管線列、ISO 欄位是否選到管線號。"
+                )
+                _log(
+                    "[Step1][HINT] 目前非空 DisplayName sample="
+                    f"{_nonempty_values(scan_df, 'DisplayName')}; "
+                    "PipelineId sample="
+                    f"{_nonempty_values(scan_df, 'PipelineId')}"
+                )
+
         # ── 根據 scan_mode 決定掃描範圍 ──
         if scan_mode == "full":
             # 嚴謹模式：全掃所有列，純靠 PipelineId / regex 辨識
             df = raw_df.copy()
+            _log("[Step1] 使用 full 掃描：全列辨識 PipelineId / DisplayName。")
             df = _attach_identity_columns(df)
             mask = df["ISO_Match_Key"].astype(str).str.strip().ne("")
             scan_df = df.copy()
             df = df[mask].copy()
+            _log_identity_summary("full", scan_df, df)
             df = _attach_scope_columns(df)
             _write_debug_outputs(scan_df, df)
             out_cols = [
@@ -608,10 +788,15 @@ class PipelineExtractor:
             df = raw_df[
                 raw_df["Level"].astype(str).str.strip() == id_level_str
             ].copy()
+            _log(
+                f"[Step1] 使用 level 掃描：Level={id_level_str}, "
+                f"命中 {len(df)} / {len(raw_df)} 列"
+            )
 
             df = _attach_identity_columns(df)
             scan_df = df.copy()
             df = df[df["ISO_Match_Key"].astype(str).str.strip().ne("")].copy()
+            _log_identity_summary("level", scan_df, df)
             df = _attach_scope_columns(df)
             _write_debug_outputs(scan_df, df)
 
@@ -632,6 +817,7 @@ class PipelineExtractor:
             (raw_df["Level"] == "2")
             & (raw_df["DisplayName"].str.contains(key, na=False))
         ].copy()
+        _log(f"[Step1] 使用 filter_key 掃描：key='{key}', roots={len(roots)}")
 
         result_records = []
         for _, row in roots.iterrows():
@@ -658,9 +844,10 @@ class PipelineExtractor:
         df = _attach_identity_columns(df)
         scan_df = df.copy()
         df = df[df["ISO_Match_Key"].astype(str).str.strip().ne("")].copy()
+        _log_identity_summary("filter_key", scan_df, df)
         df = _attach_scope_columns(df)
         _write_debug_outputs(scan_df, df)
 
-        print("[Step1] final columns in minus_1:", list(df.columns))
+        _log("[Step1] final columns in minus_1: " + str(list(df.columns)))
         df.to_csv(out_csv, index=False, encoding="utf-8-sig")
         return len(df)

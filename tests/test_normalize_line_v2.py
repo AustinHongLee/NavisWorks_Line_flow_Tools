@@ -47,6 +47,12 @@ class NormalizeLineV2Tests(unittest.TestCase):
     def test_no_size_segment(self):
         self._check("AC-1701", "AC-1701")
 
+    def test_trailing_identity_fraction_is_preserved(self):
+        self._check(
+            'E3302-3/4"DRAIN-S1P4-2/2',
+            'E3302-3/4"DRAIN-S1P4-2/2',
+        )
+
     def test_apply_size_norm_off_keeps_legacy_shape(self):
         norm, _events = normalize_line_v2(
             "/1.1_2-S11UG-N4-60371",

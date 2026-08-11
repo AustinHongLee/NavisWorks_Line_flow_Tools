@@ -2,7 +2,7 @@
 """Collision 決策對話框。"""
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
 
 from core.collision_resolver import build_common_decisions
 from gui.dialogs.identity_inspector_dialog import IdentityInspectorDialog
+from gui.iconography import app_icon
 
 
 class CollisionDecisionDialog(QDialog):
@@ -48,9 +49,19 @@ class CollisionDecisionDialog(QDialog):
             " border: none; border-bottom: 1px solid #E2E8F0;"
             " padding: 6px 8px; font-weight: 600; }"
             "QPushButton { background: #FFFFFF; color: #2563EB;"
-            " border: 1px solid #BFDBFE; border-radius: 6px;"
-            " padding: 6px 14px; font-size: 12px; font-weight: 600; }"
+            " border: 2px solid #BFDBFE; border-radius: 6px;"
+            " padding: 5px 13px; font-size: 12px; font-weight: 600; }"
             "QPushButton:hover { background: #EFF6FF; }"
+            "QPushButton:pressed { background: #DBEAFE;"
+            " padding: 6px 12px 4px 14px; }"
+            "QPushButton:focus { border-color: #2563EB; }"
+            "QPushButton:disabled { color:#94A3B8; background:#F8FAFC;"
+            " border-color:#E2E8F0; }"
+            "#primaryButton { color:#FFFFFF; background:#2563EB;"
+            " border-color:transparent; }"
+            "#primaryButton:hover { background:#1D4ED8; }"
+            "#primaryButton:pressed { background:#1E40AF; }"
+            "#primaryButton:focus { border-color:#BFDBFE; }"
         )
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 14, 16, 14)
@@ -113,12 +124,22 @@ class CollisionDecisionDialog(QDialog):
         btn_row.addWidget(self._lbl_status)
         btn_row.addStretch()
         btn_investigate = QPushButton("在調查頁查看")
+        btn_investigate.setIcon(app_icon("search"))
+        btn_investigate.setIconSize(QSize(16, 16))
+        btn_investigate.setProperty("motion-role", "secondary")
         btn_investigate.clicked.connect(self._open_current_investigation)
         btn_row.addWidget(btn_investigate)
         btn_cancel = QPushButton("取消")
+        btn_cancel.setProperty("motion-role", "secondary")
         btn_cancel.clicked.connect(self.reject)
         btn_row.addWidget(btn_cancel)
         btn_apply = QPushButton("套用決策")
+        btn_apply.setObjectName("primaryButton")
+        btn_apply.setIcon(
+            app_icon("result", normal="#FFFFFF", active="#FFFFFF")
+        )
+        btn_apply.setIconSize(QSize(16, 16))
+        btn_apply.setProperty("motion-role", "primary")
         btn_apply.clicked.connect(self.accept)
         btn_row.addWidget(btn_apply)
         root.addLayout(btn_row)

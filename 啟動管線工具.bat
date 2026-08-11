@@ -3,6 +3,16 @@ setlocal EnableDelayedExpansion
 chcp 65001 >nul 2>&1
 cd /d "%~dp0"
 
+:: ── 一般使用優先啟動已驗證的正式 EXE ──
+:: 開發者若要強制跑 source，可先設定 PIPELINE_OPS_SOURCE=1。
+if /i not "%PIPELINE_OPS_SOURCE%"=="1" (
+    if exist "dist\NavisWorks_Line_flow_Tools.exe" (
+        echo [INFO] 啟動正式版本，請稍候啟動畫面...
+        start "" /D "%~dp0dist" "%~dp0dist\NavisWorks_Line_flow_Tools.exe" %*
+        exit /b 0
+    )
+)
+
 :: ── 驗證 venv 是否正常（Google Drive 雲端佔位檔無法執行） ──
 if exist ".venv\Scripts\python.exe" (
     .venv\Scripts\python.exe --version >nul 2>&1
@@ -69,7 +79,7 @@ if %errorlevel% neq 0 (
 
 :launch
 :: ── 啟動 GUI ──
-%PY% run_pipeline_gui_qt.py
+%PY% run_pipeline_gui_qt.py %*
 
 if %errorlevel% neq 0 (
     echo.

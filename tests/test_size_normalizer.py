@@ -57,6 +57,9 @@ class NormalizeSizeTokenTests(unittest.TestCase):
     def test_frac_3_8(self):
         self._check("3/8", "3/8", 0.375, STATUS_MATCHED)
 
+    def test_identity_like_2_over_2_is_not_reduced_to_size(self):
+        self._check("2/2", "2/2", 1.0, STATUS_NON_STANDARD)
+
     def test_under_frac_1_2(self):
         self._check("1_2", "1/2", 0.5, STATUS_MATCHED)
 

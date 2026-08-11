@@ -119,12 +119,17 @@ def normalize_size_token(
         frac_value = _fraction_value(match.group(1), match.group(2))
         if frac_value is None:
             return value, None, STATUS_UNKNOWN
-        canonical = _lookup_nps(frac_value, sizes)
-        if canonical is not None:
-            return canonical, frac_value, STATUS_MATCHED
-
         numerator = int(match.group(1))
         denominator = int(match.group(2))
+        # A plain NPS fraction is a proper fraction (1/2, 3/4, ...).
+        # Values such as a trailing ``2/2`` are commonly drawing identity
+        # tokens and must not be silently reduced to a 1-inch size.  Glued
+        # mixed forms such as 11/2 and 21/2 are handled separately below.
+        if numerator < denominator:
+            canonical = _lookup_nps(frac_value, sizes)
+            if canonical is not None:
+                return canonical, frac_value, STATUS_MATCHED
+
         if numerator >= 10 and frac_value > 5:
             glued = str(numerator)
             whole = int(glued[:-1])
