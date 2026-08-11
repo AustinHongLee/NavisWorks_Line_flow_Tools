@@ -583,6 +583,113 @@ class PipelineRegressionTests(unittest.TestCase):
         self.assertEqual(result.group_key, "流水號")
         self.assertEqual(result.entries[0]["群組"], "1")
 
+    def test_json_export_grouped_mode_blocks_blank_group_keys_from_stats(self):
+        df = pd.DataFrame(
+            [
+                {
+                    "Resolved": "1",
+                    "流水號": "1",
+                    "系統": "AI",
+                    "Raw_3D_PipeCode": "/AI-001",
+                },
+                {
+                    "Resolved": "1",
+                    "流水號": "2",
+                    "系統": "  ",
+                    "Raw_3D_PipeCode": "/NO-GROUP-1",
+                },
+                {
+                    "Resolved": "1",
+                    "流水號": "3",
+                    "系統": "",
+                    "Raw_3D_PipeCode": "/NO-GROUP-2",
+                },
+            ]
+        )
+
+        result = JsonExporter().build_case_result(
+            df,
+            {"name": "by_system", "group_key": "系統", "filters": {}},
+        )
+
+        self.assertEqual(result.filtered_rows, 3)
+        self.assertEqual(result.export_rows, 1)
+        self.assertEqual(result.pipe_count, 1)
+        self.assertEqual(result.group_count, 1)
+        self.assertEqual(result.blocked_rows, 2)
+        self.assertEqual(result.blocked_breakdown["missing_group_key"], 2)
+        self.assertEqual(result.export_df["流水號"].tolist(), ["1"])
+        self.assertEqual(
+            result.entries,
+            [{"群組": "AI", "管線號": ["/AI-001"]}],
+        )
+
+    def test_json_export_grouped_mode_with_only_blank_keys_writes_nothing(self):
+        with self._tmpdir() as d:
+            mapping = os.path.join(d, "resolved_mapping.csv")
+            out_dir = os.path.join(d, "json")
+            pd.DataFrame(
+                [
+                    {
+                        "Resolved": "1",
+                        "流水號": "1",
+                        "系統": "",
+                        "Raw_3D_PipeCode": "/NO-GROUP-1",
+                    },
+                    {
+                        "Resolved": "1",
+                        "流水號": "2",
+                        "系統": "  ",
+                        "Raw_3D_PipeCode": "/NO-GROUP-2",
+                    },
+                ]
+            ).to_csv(mapping, index=False, encoding="utf-8-sig")
+            exporter = JsonExporter()
+            source_df = exporter.load_dataframe(mapping)
+            case = {"name": "by_system", "group_key": "系統", "filters": {}}
+
+            result = exporter.build_case_result(source_df, case)
+            count = exporter.export_json_v2(mapping, [case], out_dir=out_dir)
+
+            self.assertEqual(result.filtered_rows, 2)
+            self.assertEqual(result.export_rows, 0)
+            self.assertEqual(result.pipe_count, 0)
+            self.assertEqual(result.group_count, 0)
+            self.assertEqual(result.entries, [])
+            self.assertEqual(result.blocked_rows, 2)
+            self.assertEqual(result.blocked_breakdown["missing_group_key"], 2)
+            self.assertEqual(count, 0)
+            self.assertFalse(os.path.exists(os.path.join(out_dir, "by_system.json")))
+
+    def test_json_export_flat_mode_keeps_rows_with_blank_group_columns(self):
+        df = pd.DataFrame(
+            [
+                {
+                    "Resolved": "1",
+                    "流水號": "1",
+                    "群組": "",
+                    "Raw_3D_PipeCode": "/LINE-A",
+                },
+                {
+                    "Resolved": "1",
+                    "流水號": "2",
+                    "群組": "",
+                    "Raw_3D_PipeCode": "/LINE-B",
+                },
+            ]
+        )
+
+        result = JsonExporter().build_case_result(
+            df,
+            {"name": "flat", "group_key": "__FLAT__", "filters": {}},
+        )
+
+        self.assertEqual(result.output_mode, "flat")
+        self.assertEqual(result.export_rows, 2)
+        self.assertEqual(result.pipe_count, 2)
+        self.assertEqual(result.blocked_rows, 0)
+        self.assertEqual(result.blocked_breakdown["missing_group_key"], 0)
+
     def test_json_export_group_summary_counts_classification_column(self):
         df = pd.DataFrame(
             [

@@ -15,7 +15,7 @@ import json
 import os
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
@@ -46,6 +46,7 @@ from PyQt6.QtWidgets import (
 
 from gui.dialogs.collision_decision_dialog import CollisionDecisionDialog
 from gui.dialogs.trace_viewer_dialog import TraceViewerDialog
+from gui.iconography import app_icon
 from gui.theme import C_ERROR, C_PRIMARY, C_SUCCESS
 from gui.widgets import read_iso_match
 
@@ -80,11 +81,6 @@ class FilterPopup(QDialog):
         self.setWindowTitle(f"篩選 — {column_name}")
         self.setMinimumSize(280, 360)
         self.resize(320, 440)
-        self.setWindowFlags(
-            self.windowFlags()
-            | Qt.WindowType.WindowStaysOnTopHint
-        )
-
         self._all_values = all_values
         self.result_checked: set[str] | None = None
 
@@ -280,12 +276,16 @@ class JsonTabMixin:
             " #jsonToolbar QLabel { color: #1E293B; }"
             " #jsonToolbar QPushButton {"
             "   background: #FFFFFF; color: #2563EB;"
-            "   border: 1px solid #BFDBFE; border-radius: 6px;"
-            "   padding: 4px 12px; font-size: 12px; font-weight: 500;"
+            "   border: 2px solid #BFDBFE; border-radius: 6px;"
+            "   padding: 3px 11px; font-size: 12px; font-weight: 500;"
             " }"
             " #jsonToolbar QPushButton:hover {"
             "   background: #DBEAFE; border-color: #93C5FD;"
             " }"
+            " #jsonToolbar QPushButton:pressed {"
+            "   background: #BFDBFE; padding: 4px 10px 2px 12px;"
+            " }"
+            " #jsonToolbar QPushButton:focus { border-color: #2563EB; }"
         )
         tb_lay = QHBoxLayout(toolbar)
         tb_lay.setContentsMargins(12, 6, 12, 6)
@@ -322,25 +322,36 @@ class JsonTabMixin:
         tb_lay.addLayout(source_col, stretch=1)
 
         btn_auto = QPushButton("自動載入")
+        btn_auto.setIcon(app_icon("refresh"))
+        btn_auto.setIconSize(QSize(16, 16))
+        btn_auto.setProperty("motion-role", "secondary")
         btn_auto.setToolTip("從專案目錄自動尋找 iso_match.xlsx")
         btn_auto.setFixedHeight(28)
         btn_auto.clicked.connect(self._v2_auto_load_source)
         tb_lay.addWidget(btn_auto)
 
         btn_browse = QPushButton("選擇檔案…")
+        btn_browse.setIcon(app_icon("folder"))
+        btn_browse.setIconSize(QSize(16, 16))
+        btn_browse.setProperty("motion-role", "secondary")
         btn_browse.setFixedHeight(28)
         btn_browse.clicked.connect(self._v2_browse_source)
         tb_lay.addWidget(btn_browse)
 
         btn_collision = QPushButton("處理衝突")
+        btn_collision.setIcon(
+            app_icon("warning", normal="#B45309", active="#C2410C")
+        )
+        btn_collision.setIconSize(QSize(16, 16))
+        btn_collision.setProperty("motion-role", "secondary")
         btn_collision.setToolTip("開啟 NeedsDecision=1 的 collision 決策視窗")
         btn_collision.setFixedHeight(28)
         btn_collision.clicked.connect(self._v2_open_collision_decisions)
         tb_lay.addWidget(btn_collision)
 
-        self._v2_chk_diagnostics = QCheckBox("診斷")
+        self._v2_chk_diagnostics = QCheckBox("進階診斷")
         self._v2_chk_diagnostics.setToolTip(
-            "顯示攔截原因、範圍覆蓋率、JSON 原文與更多明細欄位。"
+            "顯示未匯出原因、搜尋範圍覆蓋率、JSON 預覽與更多明細欄位。"
         )
         self._v2_chk_diagnostics.setStyleSheet(
             "QCheckBox { color: #475569; font-size: 12px; }"
@@ -380,13 +391,17 @@ class JsonTabMixin:
             " #jsonCtrlPanel QPushButton {"
             "   font-size: 11px; font-weight: 500;"
             "   background: #F8FAFC; color: #475569;"
-            "   border: 1px solid #E2E8F0; border-radius: 6px;"
-            "   padding: 3px 12px;"
+            "   border: 2px solid #E2E8F0; border-radius: 6px;"
+            "   padding: 2px 11px;"
             " }"
             " #jsonCtrlPanel QPushButton:hover {"
             "   background: #EFF6FF; border-color: #93C5FD;"
             "   color: #2563EB;"
             " }"
+            " #jsonCtrlPanel QPushButton:pressed {"
+            "   background: #DBEAFE; padding: 3px 10px 1px 12px;"
+            " }"
+            " #jsonCtrlPanel QPushButton:focus { border-color: #2563EB; }"
         )
         ctrl_lay = QVBoxLayout(ctrl_panel)
         ctrl_lay.setContentsMargins(10, 8, 10, 8)
@@ -425,7 +440,7 @@ class JsonTabMixin:
             cbo_col.addItem("（不篩選）")
             frow.addWidget(cbo_col)
 
-            btn_val = QPushButton("▼ 選擇值")
+            btn_val = QPushButton("選擇值")
             btn_val.setFixedHeight(28)
             btn_val.setFixedWidth(130)
             btn_val.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -476,7 +491,7 @@ class JsonTabMixin:
 
         ctrl_lay.addWidget(select_box)
 
-        package_box = QGroupBox("2. 包裝 - 母資訊要包誰？")
+        package_box = QGroupBox("2. JSON 輸出 - 選好的管線要怎麼呈現？")
         package_box.setStyleSheet(select_box.styleSheet())
         package_lay = QVBoxLayout(package_box)
         package_lay.setContentsMargins(8, 8, 8, 8)
@@ -513,7 +528,7 @@ class JsonTabMixin:
         # ── 分組欄位 ──
         gk_row = QHBoxLayout()
         gk_row.setSpacing(6)
-        lbl_gk = QLabel("母資訊")
+        lbl_gk = QLabel("分組欄位")
         lbl_gk.setStyleSheet(
             "font-size: 12px; font-weight: 600; color: #475569;"
         )
@@ -522,7 +537,7 @@ class JsonTabMixin:
         self._v2_cbo_group_key = QComboBox()
         self._v2_cbo_group_key.setFixedWidth(150)
         self._v2_cbo_group_key.setToolTip(
-            "用這個欄位當母資訊；每個值會包住底下的 3D 身分證。"
+            "用這個欄位建立 JSON 群組；例如選「系統」時，AI、P 會各自成為一組。"
         )
         self._v2_cbo_group_key.currentIndexChanged.connect(
             lambda: (
@@ -579,9 +594,9 @@ class JsonTabMixin:
             "未 resolved 或仍需 collision 決策的列會被擋下；"
             "下方統計會顯示被擋數量。</p>"
             "<p style='margin:0 0 5px;'>"
-            "<b>3. 分組依據</b><br>"
+            "<b>3. 分組欄位</b><br>"
             "可選 <b>系統</b>、保溫、材質、群組、流水號等任一欄位。"
-            "選分類欄位時，下方會顯示每組挾帶幾個 3D 身分證。</p>"
+            "選分類欄位時，下方會顯示每組包含幾筆 3D 管線。</p>"
             "<p style='margin:0;'>"
             "<b>4. 搜尋範圍</b><br>"
             "若資料有 PipeNodePath / ParentArea，JSON 會逐管線輸出 scope，"
@@ -623,7 +638,7 @@ class JsonTabMixin:
         # ════════════════════════════════
         #  Row 3 — 資料預覽表格
         # ════════════════════════════════
-        self._v2_preview_caption = QLabel("資料預覽")
+        self._v2_preview_caption = QLabel("預覽與匯出")
         self._v2_preview_caption.setStyleSheet(
             "font-size: 11px; font-weight: 600; color: #475569;"
         )
@@ -716,9 +731,9 @@ class JsonTabMixin:
             "QTabBar::tab:selected { background: #FFFFFF;"
             f" color: {C_PRIMARY}; font-weight: 700; }}"
         )
-        self._v2_preview_tabs.addTab(self._v2_summary_table, "包裹摘要")
-        self._v2_preview_tabs.addTab(self._v2_json_preview, "JSON 診斷")
-        self._v2_preview_tabs.addTab(self._v2_table, "包裹明細")
+        self._v2_preview_tabs.addTab(self._v2_summary_table, "分組摘要")
+        self._v2_preview_tabs.addTab(self._v2_json_preview, "JSON 預覽")
+        self._v2_preview_tabs.addTab(self._v2_table, "匯出明細")
         self._set_tab_visible(1, False)
 
         lay.addWidget(self._v2_preview_tabs, stretch=1)
@@ -759,7 +774,9 @@ class JsonTabMixin:
         self._v2_btn_export = QPushButton("  匯出單一檔  ")
         self._v2_btn_export.setObjectName("btnExport")
         self._v2_btn_export.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._v2_btn_export.setFixedHeight(34)
+        self._v2_btn_export.setFixedHeight(38)
+        self._v2_btn_export.setEnabled(False)
+        self._v2_btn_export.setToolTip("請先載入資料並確認有可安全匯出的列")
         self._v2_btn_export.clicked.connect(self._v2_live_export)
         bot_lay.addWidget(self._v2_btn_export)
 
@@ -770,6 +787,7 @@ class JsonTabMixin:
         # ── 內部狀態 ──
         self._v2_col_checked: dict[str, set[str] | None] = {}
         self._v2_cat_cols: list[str] = []  # 可篩選的分類欄位
+        self._v2_column_health: dict[str, dict[str, int | float]] = {}
         self._v2_last_result = None
         # 向後相容別名 / 空列表
         self.v2_cbo_group_key = self._v2_cbo_group_key
@@ -916,7 +934,7 @@ class JsonTabMixin:
             f"color: {C_PRIMARY}; font-weight: 600;"
             " font-size: 12px;"
         )
-        self._v2_lbl_blocked.setText("攔截：載入後依目前篩選計算")
+        self._v2_lbl_blocked.setText("未匯出原因：載入後依目前篩選計算")
         self._v2_lbl_blocked.setStyleSheet(
             "color: #64748B; font-size: 11px;"
         )
@@ -932,7 +950,9 @@ class JsonTabMixin:
         self.v2_chk_group.setEnabled(has_group)
         self.v2_chk_group.setChecked(has_group)
 
-        # 建立可篩選的分類欄位清單（唯一值 < 50）
+        # 建立可篩選的分類欄位清單（非空唯一值 < 50）。
+        # 全空欄位不能出現在選單中，否則使用者會誤以為它可用來分組，
+        # 而 exporter 最後只能產生空 JSON。
         _CAT_THRESHOLD = 50
         # 固定欄位一定要出現在選單中
         _PINNED = [
@@ -952,9 +972,26 @@ class JsonTabMixin:
             "Resolved",
             "NeedsDecision",
         ]
+        column_health: dict[str, dict[str, int | float]] = {}
+        for c in cols:
+            values = df[c].fillna("").astype(str).str.strip()
+            nonempty = values[values.ne("")]
+            count = int(len(nonempty))
+            column_health[c] = {
+                "with": count,
+                "total": int(len(values)),
+                "percent": 0.0 if len(values) == 0 else round(count / len(values) * 100, 1),
+                "unique": int(nonempty.nunique()),
+            }
+        self._v2_column_health = column_health
         base_cat_cols = [
-            c for c in cols
-            if df[c].nunique() < _CAT_THRESHOLD or c in _PINNED
+            c
+            for c in cols
+            if int(column_health[c]["with"]) > 0
+            and (
+                int(column_health[c]["unique"]) < _CAT_THRESHOLD
+                or c in _PINNED
+            )
         ]
         cat_cols: list[str] = []
         for c in _PINNED:
@@ -967,10 +1004,18 @@ class JsonTabMixin:
             cat_cols = cols[:8]
         self._v2_cat_cols = cat_cols
 
-        # 填充分組依據下拉
+        # 填充分組欄位下拉
         self._v2_cbo_group_key.blockSignals(True)
         self._v2_cbo_group_key.clear()
-        self._v2_cbo_group_key.addItems(cat_cols)
+        for c in cat_cols:
+            self._v2_cbo_group_key.addItem(c)
+            health = column_health[c]
+            self._v2_cbo_group_key.setItemData(
+                self._v2_cbo_group_key.count() - 1,
+                f"{c}：非空 {health['with']}/{health['total']} "
+                f"({health['percent']:g}%)，{health['unique']} 個唯一值",
+                Qt.ItemDataRole.ToolTipRole,
+            )
         # 群組只是 resolved_mapping 中的普通欄位；有值時代表多個流水號要合併輸出。
         has_group_values = (
             "群組" in df.columns
@@ -988,12 +1033,20 @@ class JsonTabMixin:
             info["cbo_col"].blockSignals(True)
             info["cbo_col"].clear()
             info["cbo_col"].addItem("（不篩選）")
-            info["cbo_col"].addItems(cat_cols)
+            for c in cat_cols:
+                info["cbo_col"].addItem(c)
+                health = column_health[c]
+                info["cbo_col"].setItemData(
+                    info["cbo_col"].count() - 1,
+                    f"{c}：非空 {health['with']}/{health['total']} "
+                    f"({health['percent']:g}%)，{health['unique']} 個唯一值",
+                    Qt.ItemDataRole.ToolTipRole,
+                )
             info["cbo_col"].setCurrentIndex(0)
             info["cbo_col"].blockSignals(False)
             info["active_col"] = None
             info["btn_val"].setVisible(False)
-            info["btn_val"].setText("▼ 選擇值")
+            info["btn_val"].setText("選擇值")
 
         # 顯示控制面板
         self._lbl_filter_hint.setVisible(False)
@@ -1005,13 +1058,16 @@ class JsonTabMixin:
         self._v2_update_live_count()
         self._v2_update_filename()
 
-        self.v2_status_label.setText("✓ 已載入，預覽表格只顯示實際可匯出的列")
+        self.v2_status_label.setText(
+            "提示：分組摘要就是實際 JSON 群組；點一列可查看會匯出的明細。"
+        )
         self.v2_status_label.setStyleSheet(
             f"color: {C_SUCCESS}; font-size: 11px;"
         )
+        self._refresh_workbench_header()
 
     # ════════════════════════════════════════════════════════
-    #  篩選列互動（母篩選 / 篩選 2 / 篩選 3）
+    #  篩選列互動（條件 1 / 條件 2 / 條件 3）
     # ════════════════════════════════════════════════════════
 
     @staticmethod
@@ -1041,14 +1097,41 @@ class JsonTabMixin:
             self._v2_live_filters.pop(old_col, None)
             self._v2_col_checked.pop(old_col, None)
 
+        duplicate = next(
+            (
+                other_idx
+                for other_idx, other in enumerate(self._v2_filter_row_widgets)
+                if other_idx != row_idx
+                and text not in {"", "（不篩選）"}
+                and other.get("active_col") == text
+            ),
+            None,
+        )
+        if duplicate is not None:
+            info["cbo_col"].blockSignals(True)
+            info["cbo_col"].setCurrentIndex(0)
+            info["cbo_col"].blockSignals(False)
+            info["active_col"] = None
+            info["btn_val"].setVisible(False)
+            self._refresh_preview_table()
+            self._v2_update_live_count()
+            self._v2_update_filename()
+            self.v2_status_label.setText(
+                f"條件 {duplicate + 1} 已使用「{text}」；同一欄位不需重複設定。"
+            )
+            self.v2_status_label.setStyleSheet(
+                "color: #D97706; font-size: 11px; font-weight: 600;"
+            )
+            return
+
         if text == "（不篩選）" or not text:
             info["active_col"] = None
             info["btn_val"].setVisible(False)
-            info["btn_val"].setText("▼ 選擇值")
+            info["btn_val"].setText("選擇值")
         else:
             info["active_col"] = text
             info["btn_val"].setVisible(True)
-            info["btn_val"].setText("▼ 全部")
+            info["btn_val"].setText("全部值")
             info["btn_val"].setStyleSheet(
                 self._chip_style(False)
             )
@@ -1079,6 +1162,18 @@ class JsonTabMixin:
         )
         values = [v for v in values if v]
 
+        if len(values) > _POPUP_MAX_VALUES:
+            QMessageBox.warning(
+                self,
+                "唯一值過多",
+                (
+                    f"「{col}」有 {len(values):,} 個唯一值，超過介面可安全顯示的 "
+                    f"{_POPUP_MAX_VALUES:,} 個。\n\n"
+                    "為避免只套用部分值造成漏資料，本次不會開啟或套用篩選。"
+                ),
+            )
+            return
+
         existing = self._v2_col_checked.get(col)
 
         popup = FilterPopup(self, col, values, checked=existing)
@@ -1087,16 +1182,23 @@ class JsonTabMixin:
             if result is None or len(result) == len(values):
                 self._v2_col_checked.pop(col, None)
                 self._v2_live_filters.pop(col, None)
-                info["btn_val"].setText("▼ 全部")
+                info["btn_val"].setText("全部值")
                 info["btn_val"].setStyleSheet(
                     self._chip_style(False)
                 )
             else:
                 self._v2_col_checked[col] = result
                 self._v2_live_filters[col] = list(result)
-                info["btn_val"].setText(
-                    f"✓ 已選 {len(result)} 項"
-                )
+                shown_values = sorted(str(v).strip() for v in result if str(v).strip())
+                if len(shown_values) == 1:
+                    label = shown_values[0]
+                elif len(shown_values) == 2:
+                    label = "、".join(shown_values)
+                else:
+                    label = f"{shown_values[0]} +{len(shown_values) - 1}"
+                if len(label) > 14:
+                    label = label[:13] + "…"
+                info["btn_val"].setText(f"✓ {label}")
                 info["btn_val"].setStyleSheet(
                     self._chip_style(True)
                 )
@@ -1151,7 +1253,7 @@ class JsonTabMixin:
             self._v2_update_filename()
 
     def _get_pinned_head(self) -> list[str]:
-        """動態產生表格前端固定欄：流水號 + 分組依據選的欄位。"""
+        """動態產生表格前端固定欄：流水號 + 分組欄位。"""
         head = ["流水號"]
         gk = self._current_group_key()
         if gk not in ("__FLAT__", "__ALL__") and gk:
@@ -1256,14 +1358,14 @@ class JsonTabMixin:
         if result is None:
             self._clear_preview_tables()
             self._v2_json_preview.setPlainText("")
-            self._v2_preview_caption.setText("資料預覽")
+            self._v2_preview_caption.setText("預覽與匯出")
             return
 
         if result.export_rows == 0:
             self._clear_preview_tables()
             self._v2_json_preview.setPlainText(
-                "目前沒有可安全匯出的 JSON entry。\n"
-                "請調整篩選條件，或先處理 collision / unresolved 列。"
+                "目前沒有可安全匯出的 JSON。\n"
+                "請調整篩選條件，或先處理衝突 / 未解析資料。"
             )
             self._v2_preview_caption.setText("預覽與匯出：沒有可匯出的資料")
             self._v2_preview_tabs.setTabEnabled(0, False)
@@ -1278,14 +1380,14 @@ class JsonTabMixin:
 
         if result.group_summaries:
             self._v2_preview_caption.setText(
-                f"包裹摘要：母資訊 =「{result.group_key}」，"
-                f"{result.group_count} 包 / {result.pipe_count} 筆 3D 身分證"
+                f"分組摘要：依「{result.group_key}」輸出，"
+                f"{result.group_count} 組 / {result.pipe_count} 筆 3D 管線"
             )
             self._v2_preview_tabs.setTabEnabled(0, True)
             self._v2_preview_tabs.setCurrentIndex(0)
         else:
             self._v2_preview_caption.setText(
-                f"包裹明細：{result.pipe_count} 筆 3D 身分證"
+                f"匯出明細：{result.pipe_count} 筆 3D 管線"
             )
             self._v2_preview_tabs.setTabEnabled(0, False)
             self._v2_preview_tabs.setCurrentIndex(2)
@@ -1347,15 +1449,15 @@ class JsonTabMixin:
         """顯示分組後的 JSON 摘要，而不是讓使用者在明細列海裡找答案。"""
         rows = result.group_summaries[:_PREVIEW_MAX_ROWS]
         col_defs = [
-            ("母資訊", result.group_key),
-            ("包幾個 3D", "3D身分證數"),
-            ("包幾個流水號", "流水號數"),
-            ("包裹內容（範例）", "範例管線號"),
+            ("分組值", result.group_key),
+            ("3D 管線數", "3D身分證數"),
+            ("流水號數", "流水號數"),
+            ("管線號範例", "範例管線號"),
         ]
         if self._diagnostics_visible():
             col_defs = [
-                ("母資訊", result.group_key),
-                ("3D身分證數", "3D身分證數"),
+                ("分組值", result.group_key),
+                ("3D 管線數", "3D身分證數"),
                 ("流水號數", "流水號數"),
                 ("資料列數", "資料列數"),
                 ("Path覆蓋率", "Path覆蓋率"),
@@ -1411,7 +1513,7 @@ class JsonTabMixin:
         self._fill_detail_table(result, subset_df=sub)
         self._v2_preview_tabs.setCurrentIndex(2)
         self._v2_preview_caption.setText(
-            f"包裹明細：母資訊「{group_value}」包了 "
+            f"匯出明細：分組「{group_value}」包含 "
             f"{len(sub)} 列資料"
         )
 
@@ -1475,10 +1577,27 @@ class JsonTabMixin:
         bb = result.blocked_breakdown or {}
         blocked = result.blocked_rows
         if not diagnostics:
-            self._v2_lbl_scope.setVisible(False)
+            sc = result.scope_coverage or {}
+            if sc:
+                self._v2_lbl_scope.setText(
+                    "搜尋範圍："
+                    + " · ".join(
+                        [
+                            self._coverage_piece("Path", sc.get("PipeNodePath", {})),
+                            self._coverage_piece("Root", sc.get("ScopeRoot", {})),
+                            self._coverage_piece("Area", sc.get("ParentArea", {})),
+                        ]
+                    )
+                )
+                self._v2_lbl_scope.setStyleSheet(
+                    "color: #475569; font-size: 11px;"
+                )
+                self._v2_lbl_scope.setVisible(True)
+            else:
+                self._v2_lbl_scope.setVisible(False)
             if blocked:
                 self._v2_lbl_blocked.setText(
-                    f"有 {blocked} 列未進 JSON；勾「診斷」可看原因。"
+                    f"有 {blocked} 列不會進 JSON；勾「進階診斷」可看原因。"
                 )
                 self._v2_lbl_blocked.setStyleSheet(
                     "color: #D97706; font-size: 11px; font-weight: 600;"
@@ -1496,6 +1615,9 @@ class JsonTabMixin:
                 f"待決策 {int(bb.get('needs_decision', 0))}",
                 f"缺 raw {int(bb.get('missing_raw', 0))}",
             ]
+            missing_group_key = int(bb.get("missing_group_key", 0))
+            if missing_group_key:
+                bits.append(f"分組欄位空白 {missing_group_key}")
             other = int(bb.get("other", 0))
             if other:
                 bits.append(f"其他 {other}")
@@ -1511,7 +1633,7 @@ class JsonTabMixin:
         else:
             narrowed = int(bb.get("narrowed_collision", 0))
             suffix = f"（含範圍已縮小 collision {narrowed}）" if narrowed else ""
-            self._v2_lbl_blocked.setText(f"攔截 0：目前篩選可安全匯出{suffix}")
+            self._v2_lbl_blocked.setText(f"未匯出 0：目前篩選可安全匯出{suffix}")
             self._v2_lbl_blocked.setStyleSheet(
                 f"color: {C_SUCCESS}; font-size: 11px; font-weight: 600;"
             )
@@ -1535,11 +1657,13 @@ class JsonTabMixin:
         """即時計算篩選後的列數並更新底部標籤。"""
         if self._v2_iso_df is None:
             self._v2_lbl_count.setText("尚未載入")
+            self._v2_btn_export.setEnabled(False)
             return
 
         result = self._build_current_export_result()
         if result is None:
             self._v2_lbl_count.setText("尚未載入")
+            self._v2_btn_export.setEnabled(False)
             return
 
         self._update_source_health(result)
@@ -1552,11 +1676,13 @@ class JsonTabMixin:
             )
             if hasattr(self, "_v2_btn_export"):
                 self._v2_btn_export.setText("  匯出單一檔  ")
+                self._v2_btn_export.setEnabled(False)
+                self._v2_btn_export.setToolTip("目前篩選沒有符合的資料")
             return
 
         if result.export_rows == 0:
             self._v2_lbl_count.setText(
-                f"⚠ 0 列可匯出（已擋 {result.blocked_rows} 列）"
+                f"⚠ 0 列可匯出（{result.blocked_rows} 列被擋）"
             )
             self._v2_lbl_count.setStyleSheet(
                 "font-size: 12px; font-weight: 600;"
@@ -1564,14 +1690,18 @@ class JsonTabMixin:
             )
             if hasattr(self, "_v2_btn_export"):
                 self._v2_btn_export.setText("  匯出單一檔  ")
+                self._v2_btn_export.setEnabled(False)
+                self._v2_btn_export.setToolTip("目前沒有可安全匯出的資料")
             return
 
         diagnostics = self._diagnostics_visible()
-        package_word = "包" if result.group_summaries else "筆"
-        parts = [
-            f"✓ {result.group_count} {package_word}",
-            f"包住 {result.pipe_count} 筆 3D 身分證",
-        ]
+        if result.group_summaries:
+            parts = [
+                f"✓ 會輸出 {result.group_count} 組",
+                f"包含 {result.pipe_count} 筆 3D 管線",
+            ]
+        else:
+            parts = [f"✓ 會輸出 {result.pipe_count} 筆 3D 管線"]
         if diagnostics:
             parts.insert(0, f"可匯出 {result.export_rows} / {result.source_rows} 列")
             if result.scope_count:
@@ -1585,6 +1715,8 @@ class JsonTabMixin:
             f" color: {C_SUCCESS};"
         )
         if hasattr(self, "_v2_btn_export"):
+            self._v2_btn_export.setEnabled(True)
+            self._v2_btn_export.setToolTip("匯出目前預覽中可安全輸出的資料")
             if self._current_output_mode() == "grouped_split":
                 self._v2_btn_export.setText(
                     f"  匯出 {result.group_count} 個檔  "
@@ -1598,11 +1730,12 @@ class JsonTabMixin:
                     "預覽已套用安全檢查："
                     f"未解析 {int(bb.get('unresolved', 0))} / "
                     f"待決策 {int(bb.get('needs_decision', 0))} / "
-                    f"缺 raw {int(bb.get('missing_raw', 0))}"
+                    f"缺 raw {int(bb.get('missing_raw', 0))} / "
+                    f"分組欄位空白 {int(bb.get('missing_group_key', 0))}"
                 )
             else:
                 self.v2_status_label.setText(
-                    f"有 {result.blocked_rows} 列不會匯出；目前摘要只顯示會進 JSON 的包裹。"
+                    f"有 {result.blocked_rows} 列不會匯出；目前摘要只顯示會進 JSON 的資料。"
                 )
             self.v2_status_label.setStyleSheet(
                 "color: #D97706; font-size: 11px; font-weight: 600;"
@@ -1619,14 +1752,14 @@ class JsonTabMixin:
                     else f"、... 共 {len(result.group_summaries)} 組"
                 )
                 self.v2_status_label.setText(
-                    f"母資訊：{result.group_key}；包裹數：{preview}{suffix}"
+                    f"分組欄位：{result.group_key}；前幾組：{preview}{suffix}"
                 )
                 self.v2_status_label.setStyleSheet(
                     "color: #475569; font-size: 11px;"
                 )
                 return
             self.v2_status_label.setText(
-                f"輸出模式：{result.output_mode}，母資訊：{result.group_key}"
+                "輸出模式：平面清單，不依欄位分組"
             )
             self.v2_status_label.setStyleSheet(
                 "color: #475569; font-size: 11px;"
@@ -1820,7 +1953,7 @@ class JsonTabMixin:
             info["cbo_col"].blockSignals(False)
             info["active_col"] = None
             info["btn_val"].setVisible(False)
-            info["btn_val"].setText("▼ 選擇值")
+            info["btn_val"].setText("選擇值")
         if self._v2_iso_df is not None:
             self._refresh_preview_table()
         self._v2_update_live_count()

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+import json
 import re
 from difflib import SequenceMatcher
 from typing import Callable, Dict, List, Optional, Tuple
@@ -17,6 +18,11 @@ from utils.utils_common import CommonUtils, normalize_line_v2
 from utils.iso_schema import detect_schema
 from utils.pipe_parser import load_pipe_pattern, DEFAULT_CONFIG_FILENAME
 from core.iso_recall_engine import IsoRecallEngine
+from core.candidate_family import annotate_candidate_families, candidate_item_id
+from core.match_evidence import build_match_evidence
+from core.match_safety import annotate_family_aware_safety
+from core.project_rules import ProjectRuleStore
+from core.scope_indexer import parse_scope_context
 from core.size_normalizer import STATUS_MATCHED, is_size_like, normalize_size_token
 
 # ── 尺寸段偵測用 regex ──
@@ -595,12 +601,35 @@ class IsoMatcher:
         extra_iso_headers: Optional[List[str]] = None,
         limit_iso_cols: bool = False,
         first_try_path: Optional[str] = None,
+        dataset_revision: str = "",
+        approved_punctuation_aliases: Optional[Dict[str, str]] = None,
     ) -> int:
         def _log(msg: str) -> None:
             if log_fn is not None:
                 log_fn(msg)
             else:
                 print(msg)
+
+        try:
+            if approved_punctuation_aliases is None:
+                approved_punctuation_aliases = ProjectRuleStore(
+                    base_dir
+                ).approved_punctuation_aliases()
+            else:
+                approved_punctuation_aliases = dict(
+                    approved_punctuation_aliases
+                )
+            if approved_punctuation_aliases:
+                _log(
+                    "[ProjectRules] 已載入本專案核准的符號 alias："
+                    + ", ".join(
+                        f"{source!r}→{target!r}"
+                        for source, target in approved_punctuation_aliases.items()
+                    )
+                )
+        except Exception as rule_exc:
+            approved_punctuation_aliases = {}
+            _log(f"[ProjectRules] 規則載入失敗，改採全部人工覆核：{rule_exc}")
 
         if not os.path.exists(minus_csv_path):
             fallback = os.path.join(base_dir, "123_minus_1.csv")
@@ -929,6 +958,16 @@ class IsoMatcher:
             & df_minus["__line_norm"].str.strip().ne("0")
         ]
         all_3d_lines = [str(v).strip() for v in minus_valid["__line_norm"].unique() if str(v).strip()]
+        _log(
+            "Phase4: 可用 3D line_norm 數 = "
+            f"{len(all_3d_lines)}（minus rows={len(df_minus)}）"
+        )
+        if not all_3d_lines:
+            _log(
+                "Phase4[WARN]: minus 檔沒有可用 3D key。"
+                "這通常表示 Step1 沒抓到管線身份；本階段只能嘗試 "
+                "candidates.csv / First_try 反向召回。"
+            )
         prefix_to_3d: Dict[str, List[str]] = {}
         system_to_3d: Dict[str, List[str]] = {}
         semantic_to_3d: Dict[str, List[str]] = {}
@@ -948,13 +987,58 @@ class IsoMatcher:
             for key in _semantic_keys(v):
                 semantic_to_3d.setdefault(key, []).append(v)
 
-        # __line_norm → Raw_3D_PipeCode 對照（保留原始 / 前綴，供 apply_fuzzy_selections 還原）
+        # __line_norm → ITEM metadata 對照。相同字串可能存在於不同 Path，
+        # 因此不能只留一個 raw 值或把它們誤當成同一候選。
         norm_to_raw: Dict[str, str] = {}
-        for _, _mrow in df_minus[["__line_norm", "Raw_3D_PipeCode"]].drop_duplicates().iterrows():
+        norm_to_metadata: Dict[str, List[dict]] = {}
+        _meta_cols = [
+            "__line_norm",
+            "Raw_3D_PipeCode",
+            "PipeNodePath",
+            "ScopeRoot",
+            "ParentArea",
+            "PipeNodeLevel",
+        ]
+        for _, _mrow in df_minus[_meta_cols].drop_duplicates().iterrows():
             _n = str(_mrow["__line_norm"]).strip()
             _r = str(_mrow["Raw_3D_PipeCode"]).strip()
             if _n and _r and _n not in norm_to_raw:
                 norm_to_raw[_n] = _r
+            if not _n:
+                continue
+            _meta = {
+                "raw_3d": _r or _n,
+                "path": str(_mrow.get("PipeNodePath", "")).strip(),
+                "scope": str(_mrow.get("ScopeRoot", "")).strip(),
+                "parent_area": str(_mrow.get("ParentArea", "")).strip(),
+                "level": str(_mrow.get("PipeNodeLevel", "")).strip(),
+            }
+            _meta["item_id"] = candidate_item_id(_meta, dataset_revision)
+            bucket = norm_to_metadata.setdefault(_n, [])
+            if not any(old.get("item_id") == _meta["item_id"] for old in bucket):
+                bucket.append(_meta)
+
+        existing_item_owners: Dict[str, set[str]] = {}
+        if merged is not None and not merged.empty:
+            for _, owner_row in merged.iterrows():
+                owner_payload = {
+                    "raw_3d": str(owner_row.get("Raw_3D_PipeCode", "")).strip(),
+                    "path": str(owner_row.get("PipeNodePath", "")).strip(),
+                    "scope": str(owner_row.get("ScopeRoot", "")).strip(),
+                    "parent_area": str(owner_row.get("ParentArea", "")).strip(),
+                    "level": str(owner_row.get("PipeNodeLevel", "")).strip(),
+                }
+                owner_item_id = candidate_item_id(owner_payload, dataset_revision)
+                if owner_item_id.startswith("ephemeral:"):
+                    continue
+                owner_raw = str(
+                    owner_row.get("__pipe_raw", owner_row.get("管線編號", ""))
+                ).strip()
+                owner_family, _owner_events = normalize_line_v2(owner_raw)
+                if owner_family:
+                    existing_item_owners.setdefault(owner_item_id, set()).add(
+                        owner_family.upper()
+                    )
 
         def _add_candidate(
             bucket: list[dict],
@@ -967,9 +1051,13 @@ class IsoMatcher:
             forced_reason: str | None = None,
             raw_override: str | None = None,
             trace_override: str | None = None,
+            metadata_override: dict | None = None,
+            evidence_override: dict | None = None,
+            auto_safe_override: bool | None = None,
+            reason_codes_override: object = None,
         ) -> None:
             cand_3d = str(cand_3d).strip()
-            if not cand_3d or cand_3d in seen:
+            if not cand_3d:
                 return
             stripped_3d = _strip_size_segment(cand_3d)
             if forced_score is not None and forced_reason is not None:
@@ -982,27 +1070,123 @@ class IsoMatcher:
                 score, reason = _compute_segment_score(iso_line, cand_3d)
             if score < min_score:
                 return
-            seen.add(cand_3d)
             if source_hint and source_hint not in reason:
                 reason = f"{reason}; {source_hint}" if reason else source_hint
-            raw_3d = raw_override or norm_to_raw.get(cand_3d, cand_3d)
-            trace = trace_override or (
-                TraceBuilder()
-                .add("match", "fuzzy_candidate")
-                .add("iso_key", iso_line)
-                .add("line_3d", cand_3d)
-                .add("raw", raw_3d)
-                .add("score", f"{score:.2f}")
-                .add("reason", reason)
-                .build()
+            comparison = build_match_evidence(
+                iso_line,
+                cand_3d,
+                approved_punctuation_aliases=approved_punctuation_aliases,
             )
-            bucket.append({
-                "line_3d": cand_3d,
-                "raw_3d": raw_3d,
-                "score": score,
-                "reason": reason,
-                "trace": trace,
-            })
+            base_evidence = dict(evidence_override or {})
+            # Project-scoped comparison is authoritative for identity/symbol
+            # classification; retrieval details remain as supporting evidence.
+            base_evidence.update(comparison.to_dict())
+            override_codes = reason_codes_override or []
+            if isinstance(override_codes, str):
+                override_codes = [
+                    value.strip()
+                    for value in override_codes.split(",")
+                    if value.strip()
+                ]
+            # The fresh project-scoped comparison is authoritative for the
+            # punctuation approval state.  Recall evidence may have been built
+            # before the rule snapshot was applied.
+            override_codes = [
+                value
+                for value in override_codes
+                if value not in {
+                    "punctuation_review_required",
+                    "punctuation_alias_approved",
+                }
+            ]
+            base_reason_codes: object = list(
+                dict.fromkeys([*comparison.reason_codes, *list(override_codes)])
+            )
+            has_safety_block = any(
+                code
+                in {
+                    "derived_stem_match",
+                    "derived_stem_relation",
+                    "structural_node",
+                    "ownership_conflict",
+                }
+                for code in base_reason_codes
+            )
+            base_auto_safe = bool(comparison.auto_safe) and not has_safety_block
+            metadata_items = (
+                [dict(metadata_override)]
+                if metadata_override
+                else [dict(item) for item in norm_to_metadata.get(cand_3d, [])]
+            )
+            if not metadata_items:
+                metadata_items = [{}]
+            for metadata in metadata_items:
+                raw_3d = (
+                    raw_override
+                    or str(metadata.get("raw_3d", "")).strip()
+                    or norm_to_raw.get(cand_3d, cand_3d)
+                )
+                candidate_payload = {
+                    "line_3d": cand_3d,
+                    "raw_3d": raw_3d,
+                    "path": str(metadata.get("path", "")).strip(),
+                    "scope": str(metadata.get("scope", "")).strip(),
+                    "parent_area": str(metadata.get("parent_area", "")).strip(),
+                    "level": str(metadata.get("level", "")).strip(),
+                }
+                item_key = str(metadata.get("item_id", "")).strip() or candidate_item_id(
+                    candidate_payload,
+                    dataset_revision,
+                )
+                if item_key in seen:
+                    continue
+                seen.add(item_key)
+                trace = trace_override or (
+                    TraceBuilder()
+                    .add("match", "fuzzy_candidate")
+                    .add("iso_key", iso_line)
+                    .add("line_3d", cand_3d)
+                    .add("raw", raw_3d)
+                    .add("path", candidate_payload["path"])
+                    .add("score", f"{score:.2f}")
+                    .add("reason", reason)
+                    .build()
+                )
+                reason_codes = base_reason_codes or []
+                if isinstance(reason_codes, str):
+                    reason_codes = [
+                        value.strip()
+                        for value in reason_codes.split(",")
+                        if value.strip()
+                    ]
+                iso_family, _iso_family_events = normalize_line_v2(iso_line)
+                existing_owners = existing_item_owners.get(item_key, set())
+                if item_key.startswith("ephemeral:"):
+                    ownership_status = "unverifiable"
+                elif existing_owners and iso_family.upper() not in existing_owners:
+                    ownership_status = "claimed_by_other"
+                    reason_codes = list(reason_codes) + ["ownership_conflict"]
+                elif existing_owners:
+                    ownership_status = "same_family"
+                else:
+                    ownership_status = "available"
+                candidate_auto_safe = base_auto_safe and ownership_status in {
+                    "available",
+                    "same_family",
+                }
+                candidate_payload.update({
+                    "item_id": item_key,
+                    "score": score,
+                    "reason": reason,
+                    "trace": trace,
+                    "evidence": dict(base_evidence),
+                    "auto_safe": candidate_auto_safe,
+                    "pair_auto_safe": candidate_auto_safe,
+                    "reason_codes": list(dict.fromkeys(reason_codes)),
+                    "ownership_status": ownership_status,
+                    "ownership_owners": sorted(existing_owners),
+                })
+                bucket.append(candidate_payload)
 
         recall_candidates_by_iso: dict[str, list[dict]] = {}
 
@@ -1011,9 +1195,15 @@ class IsoMatcher:
             line_3d = str(candidate.get("line_3d", "")).strip()
             if not key or not line_3d:
                 return
+            candidate = dict(candidate)
+            candidate.setdefault(
+                "item_id", candidate_item_id(candidate, dataset_revision)
+            )
             bucket = recall_candidates_by_iso.setdefault(key, [])
             for old in bucket:
-                if str(old.get("line_3d", "")).strip() == line_3d:
+                if str(old.get("item_id", "")).strip() == str(
+                    candidate.get("item_id", "")
+                ).strip():
                     if float(candidate.get("score", 0.0)) > float(
                         old.get("score", 0.0)
                     ):
@@ -1026,6 +1216,7 @@ class IsoMatcher:
         recall_path = os.path.join(base_dir, "candidates.csv")
         if os.path.exists(recall_path):
             try:
+                _log(f"Phase4: 讀取 Step1 candidates.csv：{recall_path}")
                 recall_df = pd.read_csv(
                     recall_path,
                     dtype=str,
@@ -1053,6 +1244,21 @@ class IsoMatcher:
                                 score = float(str(crow.get("score", "0")).strip() or 0)
                             except Exception:
                                 score = 0.0
+                            recall_path_value = str(crow.get("Path", "")).strip()
+                            recall_level_value = str(crow.get("Level", "")).strip()
+                            recall_scope = parse_scope_context(
+                                recall_path_value,
+                                "___",
+                                iso_match_key=line_3d,
+                                raw_3d_pipe_code=raw_3d or line_3d,
+                                level=recall_level_value,
+                            )
+                            try:
+                                recall_evidence = json.loads(
+                                    str(crow.get("evidence_json", "")).strip() or "{}"
+                                )
+                            except (TypeError, ValueError):
+                                recall_evidence = {}
                             _merge_recall_candidate(str(iso_key).strip(), {
                                 "line_3d": line_3d,
                                 "raw_3d": raw_3d or line_3d,
@@ -1060,9 +1266,26 @@ class IsoMatcher:
                                 "reason": str(crow.get("reason", "")).strip()
                                 or "ISO 反向召回候選",
                                 "trace": str(crow.get("trace_events", "")).strip(),
+                                "path": str(crow.get("PipeNodePath", "")).strip()
+                                or recall_scope["PipeNodePath"],
+                                "scope": str(crow.get("ScopeRoot", "")).strip()
+                                or recall_scope["ScopeRoot"],
+                                "parent_area": str(crow.get("ParentArea", "")).strip()
+                                or recall_scope["ParentArea"],
+                                "level": recall_scope["PipeNodeLevel"],
+                                "evidence": recall_evidence,
+                                "auto_safe": str(crow.get("auto_safe", "")).strip()
+                                in {"1", "true", "True"},
+                                "reason_codes": str(crow.get("reason_codes", "")).strip(),
                             })
+                    _log(
+                        "Phase4: candidates.csv 反向召回涵蓋 "
+                        f"{len(recall_candidates_by_iso)} 條 ISO"
+                    )
             except Exception as exc:
                 _log(f"Phase4: 讀取 ISO 反向召回候選失敗（略過）：{exc}")
+        else:
+            _log("Phase4: 找不到 candidates.csv，略過 Step1 反向候選檔。")
 
         def _normalize_first_try_chunk(chunk: pd.DataFrame) -> pd.DataFrame:
             n_cols = min(len(chunk.columns), 5)
@@ -1077,6 +1300,7 @@ class IsoMatcher:
 
         def _scan_first_try_reverse_recall(path: str) -> int:
             if not path or not os.path.exists(path):
+                _log(f"Phase4: First_try 反向召回略過，檔案不存在：{path}")
                 return 0
             iso_keys = {
                 str(v).strip()
@@ -1084,9 +1308,16 @@ class IsoMatcher:
                 if str(v).strip()
             }
             if not iso_keys:
+                _log("Phase4: First_try 反向召回略過，沒有未配對 ISO key。")
                 return 0
+            _log(
+                "Phase4: 開始掃描 First_try 反向召回："
+                f"{path}，ISO keys={len(iso_keys)}，chunksize=50000"
+            )
             engine = IsoRecallEngine(iso_keys)
             found = 0
+            scanned_rows = 0
+            chunk_count = 0
             try:
                 reader = pd.read_csv(
                     path,
@@ -1094,9 +1325,11 @@ class IsoMatcher:
                     encoding="utf-8-sig",
                     low_memory=False,
                     on_bad_lines="skip",
-                    chunksize=50000,
+                    chunksize=10000,
                 )
                 for chunk in reader:
+                    chunk_count += 1
+                    scanned_rows += len(chunk)
                     chunk = _normalize_first_try_chunk(chunk)
                     for _, first_row in chunk.iterrows():
                         for cand in engine.recall_row(
@@ -1104,17 +1337,49 @@ class IsoMatcher:
                             max_candidates=5,
                             min_score=0.50,
                         ):
+                            recall_candidate_path = str(
+                                getattr(cand, "path", "")
+                                or first_row.get("Path", "")
+                            ).strip()
+                            recall_candidate_level = str(
+                                getattr(cand, "level", "")
+                                or first_row.get("Level", "")
+                            ).strip()
+                            recall_scope = parse_scope_context(
+                                recall_candidate_path,
+                                "___",
+                                iso_match_key=cand.normalized_3d,
+                                raw_3d_pipe_code=cand.raw_3d,
+                                level=recall_candidate_level,
+                            )
                             _merge_recall_candidate(cand.iso_key, {
                                 "line_3d": cand.normalized_3d,
                                 "raw_3d": cand.raw_3d,
                                 "score": cand.score,
                                 "reason": cand.reason or "ISO 反向召回候選",
                                 "trace": cand.trace,
+                                "path": recall_scope["PipeNodePath"],
+                                "scope": recall_scope["ScopeRoot"],
+                                "parent_area": recall_scope["ParentArea"],
+                                "level": recall_scope["PipeNodeLevel"],
+                                "evidence": dict(getattr(cand, "evidence", {}) or {}),
+                                "auto_safe": bool(getattr(cand, "auto_safe", False)),
+                                "reason_codes": list(
+                                    getattr(cand, "reason_codes", ()) or ()
+                                ),
                             })
                             found += 1
+                    _log(
+                        "Phase4: First_try 反向召回進度："
+                        f"已掃 {scanned_rows} 列，候選 {found} 筆"
+                    )
             except Exception as exc:
                 _log(f"Phase4: 掃描 First_try 反向召回失敗（略過）：{exc}")
                 return 0
+            _log(
+                "Phase4: First_try 反向召回完成："
+                f"掃描 {scanned_rows} 列，候選 {found} 筆"
+            )
             return found
 
         first_try_to_scan = (
@@ -1130,13 +1395,30 @@ class IsoMatcher:
                 "Phase4: ISO 反向召回掃描 First_try，"
                 f"候選 {recall_scan_count} 筆，涵蓋 {hit_iso_count} 條 ISO"
             )
+        else:
+            _log("Phase4: First_try 反向召回未找到候選。")
 
         self.fuzzy_unmatched = []
-        for _, row in iso_still_unmatched.iterrows():
+        _log(
+            "Phase4: 建立模糊比對清單："
+            f"ISO 未配對 {len(iso_still_unmatched)} 條，"
+            f"3D 索引 {len(all_3d_lines)} 條，"
+            f"反向召回 ISO {len(recall_candidates_by_iso)} 條"
+        )
+        fuzzy_total = len(iso_still_unmatched)
+        for fuzzy_index, (_, row) in enumerate(
+            iso_still_unmatched.iterrows(),
+            start=1,
+        ):
             iso_line = str(row["__line_norm"]).strip()
             iso_spool = str(row.get("流水號", "")).strip()
             if not iso_line:
                 continue
+            iso_metadata = {
+                str(column): row.get(column, "")
+                for column in _iso_original_cols
+                if not str(column).startswith("__")
+            }
             iso_parts = _split_line_parts(iso_line)
             pfx = "-".join(iso_parts[:2]) if len(iso_parts) >= 2 else iso_line
             iso_seg = _parse_segments(iso_line)
@@ -1194,6 +1476,14 @@ class IsoMatcher:
             # ── 第四點五輪：Step1 candidates.csv 的 ISO 反向召回候選 ──
             if len(candidates) < 8:
                 for recall in recall_candidates_by_iso.get(iso_line, []):
+                    recall_metadata = {
+                        "item_id": recall.get("item_id", ""),
+                        "raw_3d": recall.get("raw_3d", ""),
+                        "path": recall.get("path", ""),
+                        "scope": recall.get("scope", ""),
+                        "parent_area": recall.get("parent_area", ""),
+                        "level": recall.get("level", ""),
+                    }
                     _add_candidate(
                         candidates,
                         seen_3d,
@@ -1204,6 +1494,10 @@ class IsoMatcher:
                         forced_reason=str(recall.get("reason", "")),
                         raw_override=str(recall.get("raw_3d", "")),
                         trace_override=str(recall.get("trace", "")),
+                        metadata_override=recall_metadata,
+                        evidence_override=dict(recall.get("evidence", {}) or {}),
+                        auto_safe_override=bool(recall.get("auto_safe", False)),
+                        reason_codes_override=recall.get("reason_codes", []),
                     )
 
             # ── 第五輪：全文搜索（前綴不同的候選）──
@@ -1243,12 +1537,33 @@ class IsoMatcher:
                     )
 
             candidates.sort(key=lambda c: -c["score"])
-            candidates = candidates[:15]  # 保留前 15 筆候選
+            candidates = annotate_candidate_families(candidates[:15])
             self.fuzzy_unmatched.append({
                 "iso_line": iso_line,
                 "iso_spool": iso_spool,
+                "iso_metadata": iso_metadata,
                 "candidates": candidates,
             })
+            if fuzzy_index == 1 or fuzzy_index % 25 == 0 or fuzzy_index == fuzzy_total:
+                _log(
+                    "Phase4: 模糊候選整理進度："
+                    f"已處理 {fuzzy_index}/{fuzzy_total} 條 ISO"
+                )
+
+        # Final automation gate: scores only rank.  Reciprocal ownership is
+        # evaluated per ISO family, so two spool rows from the same line do not
+        # incorrectly block each other.
+        annotate_family_aware_safety(self.fuzzy_unmatched)
+
+        empty_candidate_count = sum(
+            1 for item in self.fuzzy_unmatched if not item.get("candidates")
+        )
+        if self.fuzzy_unmatched:
+            _log(
+                "Phase4: 模糊比對清單完成："
+                f"{len(self.fuzzy_unmatched)} 條，"
+                f"其中 {empty_candidate_count} 條沒有任何候選"
+            )
 
         if self.fuzzy_unmatched:
             _log(f"模糊比對候選：{len(self.fuzzy_unmatched)} 條 ISO 待手動確認")
@@ -1680,6 +1995,15 @@ class IsoMatcher:
             "MatchScore",
             "MatchSource",
             "ConfidencePrimary",
+            "PipeNodePath",
+            "ScopeRoot",
+            "ParentArea",
+            "PipeNodeLevel",
+            "NeedsDecision",
+            "DecisionState",
+            "DecisionSource",
+            "EvidenceClass",
+            "ReasonCodes",
         ]:
             if required_col not in cols:
                 cols.append(required_col)
@@ -1687,11 +2011,42 @@ class IsoMatcher:
         new_rows = []
         for sel in selections:
             row: dict = {c: "" for c in cols}
+            iso_metadata = sel.get("iso_metadata", {})
+            if isinstance(iso_metadata, dict):
+                for column, value in iso_metadata.items():
+                    column_name = str(column).strip()
+                    if column_name and not column_name.startswith("__"):
+                        row[column_name] = value
+
+            # Matching fields are authoritative and must override any
+            # same-named values carried from the original ISO row.
             row["管線編號"] = sel.get("iso_line", "")
             row["流水號"] = sel.get("iso_spool", "")
             row["ISO_Match_Key"] = sel.get("line_3d", "")
             row["Raw_3D_PipeCode"] = sel.get("raw_3d") or sel.get("line_3d", "")
             row["MatchType"] = "fuzzy_manual"
+            row["PipeNodePath"] = sel.get("path") or sel.get("PipeNodePath", "")
+            row["ScopeRoot"] = sel.get("scope") or sel.get("ScopeRoot", "")
+            row["ParentArea"] = sel.get("parent_area") or sel.get("ParentArea", "")
+            row["PipeNodeLevel"] = sel.get("level") or sel.get("PipeNodeLevel", "")
+            row["NeedsDecision"] = "0"
+            row["DecisionState"] = "committed"
+            row["DecisionSource"] = str(
+                sel.get("decision_source") or "human_workbench"
+            )
+            evidence = sel.get("evidence", {})
+            if not isinstance(evidence, dict):
+                evidence = {}
+            row["EvidenceClass"] = str(
+                evidence.get("classification")
+                or sel.get("evidence_class", "")
+            )
+            reason_codes = sel.get("reason_codes") or evidence.get("reason_codes") or []
+            if isinstance(reason_codes, str):
+                reason_codes = [reason_codes]
+            row["ReasonCodes"] = ",".join(
+                str(code).strip() for code in reason_codes if str(code).strip()
+            )
             try:
                 score_value = float(str(sel.get("score", "")).strip())
             except Exception:

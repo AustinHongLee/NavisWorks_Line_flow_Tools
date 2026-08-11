@@ -10,7 +10,7 @@ import os
 from typing import TYPE_CHECKING, Optional
 
 import pandas as pd
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -42,6 +42,7 @@ from gui.widgets import (
 )
 from gui.dialogs.pipe_config_dialog import PipeCodeConfigDialog
 from gui.dialogs.detect_progress_dialog import DetectProgressDialog
+from gui.iconography import app_icon
 from gui.workers.detect_worker import LevelDetectWorker
 from utils.pipe_parser import DEFAULT_CONFIG_FILENAME, load_pipe_pattern
 from utils.help_texts import ISO_MINUS_HELP
@@ -90,13 +91,13 @@ class PipelineTabMixin:
         self.txt_base_dir.setMinimumHeight(38)
         self.txt_base_dir.textChanged.connect(self._update_file_status)
         dir_row.addWidget(self.txt_base_dir, stretch=1)
-        btn_browse = QPushButton("瀏覽")
-        btn_browse.setProperty("class", "btn-primary")
-        btn_browse.setFixedHeight(38)
-        btn_browse.setFixedWidth(80)
-        btn_browse.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_browse.clicked.connect(self._browse_base_dir)
-        dir_row.addWidget(btn_browse)
+        self.btn_browse_base_dir = QPushButton("瀏覽")
+        self.btn_browse_base_dir.setProperty("class", "btn-primary")
+        self.btn_browse_base_dir.setFixedHeight(38)
+        self.btn_browse_base_dir.setFixedWidth(96)
+        self.btn_browse_base_dir.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_browse_base_dir.clicked.connect(self._browse_base_dir)
+        dir_row.addWidget(self.btn_browse_base_dir)
         pp.addLayout(dir_row)
 
         ft_row = QHBoxLayout()
@@ -246,8 +247,11 @@ class PipelineTabMixin:
         pm.addWidget(make_separator())
         opt_row = QHBoxLayout()
         opt_row.setSpacing(16)
-        btn_pipe_pattern = QPushButton("🔧 管線編號拆解設定…")
+        btn_pipe_pattern = QPushButton("管線編號拆解設定…")
         btn_pipe_pattern.setProperty("class", "btn-accent")
+        btn_pipe_pattern.setIcon(app_icon("tune"))
+        btn_pipe_pattern.setIconSize(QSize(17, 17))
+        btn_pipe_pattern.setProperty("motion-role", "secondary")
         btn_pipe_pattern.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_pipe_pattern.clicked.connect(self._open_pipe_pattern_dialog)
         opt_row.addWidget(btn_pipe_pattern)
@@ -289,12 +293,12 @@ class PipelineTabMixin:
             lambda: self._update_file_status()
         )
         iso_row.addWidget(self.txt_iso_path, stretch=1)
-        btn_iso = QPushButton("選檔")
-        btn_iso.setProperty("class", "btn-primary")
-        btn_iso.setFixedHeight(36)
-        btn_iso.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_iso.clicked.connect(self._browse_iso_file)
-        iso_row.addWidget(btn_iso)
+        self.btn_browse_iso = QPushButton("選檔")
+        self.btn_browse_iso.setProperty("class", "btn-primary")
+        self.btn_browse_iso.setFixedHeight(36)
+        self.btn_browse_iso.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_browse_iso.clicked.connect(self._browse_iso_file)
+        iso_row.addWidget(self.btn_browse_iso)
         pi.addLayout(iso_row)
 
         # 2×2 combo grid
@@ -405,8 +409,11 @@ class PipelineTabMixin:
             "ISO 比對使用 123_minus_2 的 ISO_Match_Key 與 Raw_3D_PipeCode 做對應。"
         )
         help_row.addWidget(iso_note, stretch=1)
-        btn_help = QPushButton("❓ 操作說明")
+        btn_help = QPushButton("操作說明")
         btn_help.setProperty("class", "btn-outline")
+        btn_help.setIcon(app_icon("inspect"))
+        btn_help.setIconSize(QSize(17, 17))
+        btn_help.setProperty("motion-role", "secondary")
         btn_help.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_help.clicked.connect(self._show_minus_help)
         help_row.addWidget(btn_help)
@@ -440,6 +447,9 @@ class PipelineTabMixin:
         hdr_bar.addWidget(self.cbo_header_available)
         btn_load_hdr = QPushButton("載入 ISO 欄位")
         btn_load_hdr.setProperty("class", "btn-accent")
+        btn_load_hdr.setIcon(app_icon("refresh"))
+        btn_load_hdr.setIconSize(QSize(17, 17))
+        btn_load_hdr.setProperty("motion-role", "secondary")
         btn_load_hdr.clicked.connect(self._load_headers_from_iso)
         hdr_bar.addWidget(btn_load_hdr)
         btn_add = QPushButton("➕")
@@ -484,14 +494,27 @@ class PipelineTabMixin:
 
         # 未選目錄 → 全部 neutral
         if not base:
-            for lbl in (
+            set_sidebar_badge(
                 self.lbl_first_status,
+                "1  First_try：等待專案",
+                "neutral",
+            )
+            set_sidebar_badge(
                 self.lbl_iso_status,
+                "2  ISO LIST：等待專案",
+                "neutral",
+            )
+            set_sidebar_badge(
                 self.lbl_config_status,
-            ):
-                set_sidebar_badge(lbl, "⬜ 請先選擇專案目錄", "neutral")
+                "選用設定：等待專案",
+                "neutral",
+            )
             self.lbl_iso_detail.setVisible(False)
             self.lbl_ready.setVisible(False)
+            self._set_run_readiness(
+                False,
+                "請先選擇含 First_try.csv 的專案資料夾。",
+            )
             return
 
         # （ISO 自動載入已移至 Worker 背景線程處理）
@@ -503,12 +526,14 @@ class PipelineTabMixin:
         first = self.txt_first_name.text().strip() or "First_try.csv"
         first_path = os.path.join(base, first)
         if os.path.isfile(first_path):
-            set_sidebar_badge(self.lbl_first_status, f"✅ {first}", "ok")
+            set_sidebar_badge(self.lbl_first_status, f"✓  First_try：{first}", "ok")
+            self.lbl_first_status.setToolTip(first_path)
             ready_count += 1
         else:
             set_sidebar_badge(
-                self.lbl_first_status, f"❌ {first} 不存在", "err"
+                self.lbl_first_status, f"!  First_try：{first} 不存在", "err"
             )
+            self.lbl_first_status.setToolTip(first_path)
 
         # ── ISO ──
         iso_path = self.txt_iso_path.text().strip()
@@ -528,8 +553,9 @@ class PipelineTabMixin:
             iso_name = os.path.basename(iso_found)
             if has_sheet and has_pipe and has_spool and not dup_cols:
                 set_sidebar_badge(
-                    self.lbl_iso_status, f"✅ {iso_name}", "ok"
+                    self.lbl_iso_status, f"✓  ISO LIST：{iso_name}", "ok"
                 )
+                self.lbl_iso_status.setToolTip(iso_found)
                 self.lbl_iso_detail.setVisible(False)
                 ready_count += 1
             else:
@@ -544,9 +570,10 @@ class PipelineTabMixin:
                     missing.append("管線 / 流水號不可相同")
                 set_sidebar_badge(
                     self.lbl_iso_status,
-                    f"⚠ {iso_name} — 設定未完成",
+                    f"!  ISO LIST：{iso_name}",
                     "err",
                 )
+                self.lbl_iso_status.setToolTip(iso_found)
                 set_sidebar_badge(
                     self.lbl_iso_detail,
                     f"   缺少：{'、'.join(missing)}",
@@ -556,7 +583,7 @@ class PipelineTabMixin:
         else:
             set_sidebar_badge(
                 self.lbl_iso_status,
-                "⬜ 未偵測到 ISO 檔（可手動選）",
+                "2  ISO LIST：尚未選擇",
                 "neutral",
             )
             self.lbl_iso_detail.setVisible(False)
@@ -579,13 +606,22 @@ class PipelineTabMixin:
         # ── 就緒狀態 ──
         remaining = total_required - ready_count
         if remaining <= 0:
-            set_sidebar_badge(self.lbl_ready, "🚀 可以執行！", "ready")
+            set_sidebar_badge(self.lbl_ready, "✓ 資料已就緒", "ready")
             self.lbl_ready.setVisible(True)
+            run_reason = ""
         elif remaining == 1:
-            set_sidebar_badge(self.lbl_ready, "還差 1 個檔案", "neutral")
+            set_sidebar_badge(self.lbl_ready, "還有 1 項未完成", "neutral")
             self.lbl_ready.setVisible(True)
+            run_reason = (
+                "找不到 First_try.csv，請重新選擇專案或修正檔名。"
+                if not os.path.isfile(first_path)
+                else "請選擇 ISO LIST，並完成工作表、管線欄位與流水號欄位設定。"
+            )
         else:
             self.lbl_ready.setVisible(False)
+            run_reason = "請先補齊 First_try.csv 與 ISO LIST 設定。"
+
+        self._set_run_readiness(remaining <= 0, run_reason)
 
     # ════════════════════════════════════════
     #  瀏覽 / 偵測回呼
@@ -634,9 +670,8 @@ class PipelineTabMixin:
         if not d:
             return
         self.txt_base_dir.setText(d)
+        self._try_auto_load_iso(d)
         self._update_file_status()
-        # 選定目錄後自動啟動完整偵測流程（含 ISO 搜尋 + Level 偵測）
-        self._on_detect_id_level()
 
     def _browse_iso_file(self):
         path, _ = QFileDialog.getOpenFileName(

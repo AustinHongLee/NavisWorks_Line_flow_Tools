@@ -10,6 +10,11 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(SPECPATH)
 ENTRYPOINT = PROJECT_ROOT / "run_pipeline_gui_qt.py"
+BRAND_DIR = PROJECT_ROOT / "assets" / "branding"
+APP_ICON_PNG = BRAND_DIR / "ie_mark_v2.png"
+APP_ICON_ICO = BRAND_DIR / "pipeline_ops_v2.ico"
+STARTUP_SPLASH = BRAND_DIR / "startup_splash_v2.png"
+VERSION_INFO = BRAND_DIR / "windows_version_info_v4.txt"
 
 block_cipher = None
 
@@ -27,7 +32,10 @@ a = Analysis(
     [str(ENTRYPOINT)],
     pathex=[str(PROJECT_ROOT)],
     binaries=[],
-    datas=[],
+    datas=[
+        (str(APP_ICON_PNG), "assets/branding"),
+        (str(STARTUP_SPLASH), "assets/branding"),
+    ],
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
@@ -44,9 +52,23 @@ a = Analysis(
 )
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
+splash = Splash(
+    str(STARTUP_SPLASH),
+    binaries=a.binaries,
+    datas=a.datas,
+    text_pos=(56, 326),
+    text_size=11,
+    text_color="#52697F",
+    text_default="正在啟動，請稍候…",
+    always_on_top=False,
+    minify_script=True,
+)
+
 exe = EXE(
     pyz,
     a.scripts,
+    splash,
+    splash.binaries,
     a.binaries,
     a.datas,
     [],
@@ -63,4 +85,6 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=str(APP_ICON_ICO),
+    version=str(VERSION_INFO),
 )

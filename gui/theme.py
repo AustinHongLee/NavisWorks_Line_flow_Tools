@@ -37,8 +37,8 @@ class GlobalTokens:
     text_primary: str = "#1E293B"
     text_secondary: str = "#475569"
     text_tertiary: str = "#64748B"
-    text_muted: str = "#94A3B8"
-    text_placeholder: str = "#CBD5E1"
+    text_muted: str = "#64748B"
+    text_placeholder: str = "#94A3B8"
     text_on_dark: str = "#E2E8F0"
 
     # ── Borders ──

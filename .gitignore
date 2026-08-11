@@ -25,6 +25,8 @@ minus_line_coverage.xlsx
 run_pipeline_log.txt
 live_selection.json
 tmp*/
+.flowdesk/
+.pytest_cache/
 
 # IDE
 .vscode/

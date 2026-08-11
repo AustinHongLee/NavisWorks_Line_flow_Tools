@@ -126,6 +126,7 @@ class JsonExporter:
                     "unresolved": 0,
                     "needs_decision": 0,
                     "missing_raw": 0,
+                    "missing_group_key": 0,
                     "other": 0,
                     "narrowed_collision": 0,
                 },
@@ -133,8 +134,18 @@ class JsonExporter:
             )
 
         safety_df = self.filter_json_safe(filtered_df, filters, log=log)
-        export_df = self.filter_nonempty_raw(safety_df)
-        resolved_group_key = self.resolve_group_key(export_df, group_key)
+        raw_export_df = self.filter_nonempty_raw(safety_df)
+        resolved_group_key = self.resolve_group_key(raw_export_df, group_key)
+        export_df = self.filter_nonempty_group_key(
+            raw_export_df,
+            resolved_group_key,
+        )
+        if log and len(export_df) != len(raw_export_df):
+            self._log_print(
+                "[Step4_v2] grouped key safety filter："
+                f"{len(raw_export_df)} -> {len(export_df)} "
+                f"（'{resolved_group_key}' 空白 {len(raw_export_df) - len(export_df)} 列）"
+            )
         entries = self.build_entries(export_df, resolved_group_key)
         group_summaries = self.build_group_summaries(
             export_df,
@@ -143,6 +154,7 @@ class JsonExporter:
         blocked_breakdown = self.blocked_breakdown(
             filtered_df,
             filters,
+            resolved_group_key,
         )
         pipe_count = self.unique_pipe_count(export_df)
         scope_count = sum(len(e.get("搜尋範圍", [])) for e in entries)
@@ -155,7 +167,13 @@ class JsonExporter:
             export_rows=len(export_df),
             blocked_rows=sum(
                 int(blocked_breakdown.get(k, 0))
-                for k in ("unresolved", "needs_decision", "missing_raw", "other")
+                for k in (
+                    "unresolved",
+                    "needs_decision",
+                    "missing_raw",
+                    "missing_group_key",
+                    "other",
+                )
             ),
             pipe_count=pipe_count,
             group_count=len(entries),
@@ -263,6 +281,20 @@ class JsonExporter:
         raw_mask = df_src["Raw_3D_PipeCode"].astype(str).str.strip().ne("")
         return df_src[raw_mask].copy()
 
+    def filter_nonempty_group_key(
+        self,
+        df_src: pd.DataFrame,
+        group_key: str,
+    ) -> pd.DataFrame:
+        if group_key in ("__FLAT__", "__ALL__"):
+            return df_src.copy()
+        if group_key not in df_src.columns:
+            return df_src.iloc[0:0].copy()
+        group_mask = (
+            df_src[group_key].fillna("").astype(str).str.strip().ne("")
+        )
+        return df_src[group_mask].copy()
+
     def exportable_mask(
         self,
         df_src: pd.DataFrame,
@@ -320,12 +352,14 @@ class JsonExporter:
         self,
         df_src: pd.DataFrame,
         applied_filters: Dict[str, list[str]],
+        group_key: str = "__ALL__",
     ) -> Dict[str, int]:
         if df_src.empty:
             return {
                 "unresolved": 0,
                 "needs_decision": 0,
                 "missing_raw": 0,
+                "missing_group_key": 0,
                 "other": 0,
                 "narrowed_collision": 0,
             }
@@ -336,13 +370,24 @@ class JsonExporter:
         )
         safety_mask = self.safety_mask(df_src, applied_filters)
         pending_mask = self.pending_decision_mask(df_src)
-        exported_mask = raw_mask & safety_mask
+        if group_key in ("__FLAT__", "__ALL__"):
+            group_mask = pd.Series(True, index=df_src.index)
+        elif group_key in df_src.columns:
+            group_mask = (
+                df_src[group_key].fillna("").astype(str).str.strip().ne("")
+            )
+        else:
+            group_mask = pd.Series(False, index=df_src.index)
+        exported_mask = raw_mask & safety_mask & group_mask
         blocked_mask = ~exported_mask
 
         missing_raw = blocked_mask & ~raw_mask
-        needs_decision = blocked_mask & raw_mask & pending_mask
+        needs_decision = blocked_mask & raw_mask & pending_mask & ~safety_mask
         unresolved = blocked_mask & raw_mask & ~pending_mask & ~safety_mask
-        other = blocked_mask & ~(missing_raw | needs_decision | unresolved)
+        missing_group_key = blocked_mask & raw_mask & safety_mask & ~group_mask
+        other = blocked_mask & ~(
+            missing_raw | needs_decision | unresolved | missing_group_key
+        )
 
         has_scope_filter = any(
             str(k).strip() in {"ParentArea", "ScopeRoot"}
@@ -358,6 +403,7 @@ class JsonExporter:
             "unresolved": int(unresolved.sum()),
             "needs_decision": int(needs_decision.sum()),
             "missing_raw": int(missing_raw.sum()),
+            "missing_group_key": int(missing_group_key.sum()),
             "other": int(other.sum()),
             "narrowed_collision": int(narrowed_collision.sum()),
         }
@@ -683,7 +729,19 @@ class JsonExporter:
                 self._log_print("[Step4_v2] case 套用 filters 後沒有任何列，跳過本 case。")
                 continue
             if result.export_rows == 0:
-                self._log_print("[Step4_v2] safety filter 後沒有可安全匯出的列，跳過本 case。")
+                missing_group_key = int(
+                    result.blocked_breakdown.get("missing_group_key", 0)
+                )
+                if missing_group_key:
+                    self._log_print(
+                        "[Step4_v2] grouped 模式沒有非空白群組可匯出："
+                        f"group_key='{result.group_key}', "
+                        f"blocked={missing_group_key}；跳過本 case。"
+                    )
+                else:
+                    self._log_print(
+                        "[Step4_v2] safety filter 後沒有可安全匯出的列，跳過本 case。"
+                    )
                 continue
             if not result.entries:
                 self._log_print(

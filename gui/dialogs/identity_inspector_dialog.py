@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
 
 from core.identity_investigator import InvestigationPaths, investigate_identity
 from gui.dialogs.trace_viewer_dialog import TraceViewerDialog
+from gui.iconography import app_icon
 
 
 ROLE_RECORD = int(Qt.ItemDataRole.UserRole) + 10
@@ -124,9 +125,12 @@ class IdentityInspectorWidget(QWidget):
             " padding: 8px 11px; font-size: 13px; }"
             "#identityInspector QLineEdit:focus { border-color: #2563EB; }"
             "#identityInspector QPushButton { background: #2563EB; color: #FFFFFF;"
-            " border: 1px solid #1D4ED8; border-radius: 7px;"
-            " padding: 8px 16px; font-size: 13px; font-weight: 700; }"
+            " border: 2px solid transparent; border-radius: 7px;"
+            " padding: 7px 15px; font-size: 13px; font-weight: 700; }"
             "#identityInspector QPushButton:hover { background: #1D4ED8; }"
+            "#identityInspector QPushButton:pressed { background: #1E40AF;"
+            " padding: 8px 14px 6px 16px; }"
+            "#identityInspector QPushButton:focus { border-color: #BFDBFE; }"
             "#identityInspector QSplitter::handle { background: #E2E8F0; }"
         )
         root = QVBoxLayout(self)
@@ -134,6 +138,16 @@ class IdentityInspectorWidget(QWidget):
         root.setSpacing(10)
 
         root.addWidget(self._build_command_bar())
+        self.lbl_availability = QLabel(
+            "搜尋後會顯示本次 Run 保留了哪些調查證據。"
+        )
+        self.lbl_availability.setWordWrap(True)
+        self.lbl_availability.setObjectName("evidenceAvailability")
+        self.lbl_availability.setStyleSheet(
+            "color:#475569; background:#F8FAFC; border:1px solid #E2E8F0; "
+            "border-radius:7px; padding:7px 10px; font-size:11px;"
+        )
+        root.addWidget(self.lbl_availability)
         root.addWidget(self._build_metrics_row())
 
         workbench = QSplitter(Qt.Orientation.Horizontal)
@@ -165,10 +179,15 @@ class IdentityInspectorWidget(QWidget):
         self.txt_query.returnPressed.connect(self.search)
         lay.addWidget(self.txt_query, stretch=1)
 
-        btn = QPushButton("搜尋")
-        btn.setFixedWidth(96)
-        btn.clicked.connect(self.search)
-        lay.addWidget(btn)
+        self.btn_search = QPushButton("搜尋")
+        self.btn_search.setFixedWidth(104)
+        self.btn_search.setIcon(
+            app_icon("search", normal="#FFFFFF", active="#FFFFFF")
+        )
+        self.btn_search.setIconSize(QSize(17, 17))
+        self.btn_search.setProperty("motion-role", "secondary")
+        self.btn_search.clicked.connect(self.search)
+        lay.addWidget(self.btn_search)
         return frame
 
     def _build_metrics_row(self) -> QWidget:
@@ -384,8 +403,26 @@ class IdentityInspectorWidget(QWidget):
         family = result.get("family", {})
         for key, lbl in self._family_labels.items():
             lbl.setText(str(family.get(key, "-") or "-"))
+        evidence_available = {
+            "iso_hit_count": bool(result.get("has_iso_source")),
+            "minus1_hit_count": bool(result.get("has_minus1")),
+            "candidate_hit_count": bool(result.get("has_candidates")),
+            "first_try_hit_count": bool(
+                result.get("has_first_try_trace") or result.get("has_first_try")
+            ),
+            "drop_last_3d_count": bool(
+                result.get("has_minus1") or result.get("has_identity_index")
+            ),
+        }
         for key, lbl in self._metric_labels.items():
-            lbl.setText(str(family.get(key, "0") or "0"))
+            lbl.setText(
+                str(family.get(key, "0") or "0")
+                if evidence_available.get(key, True)
+                else "—"
+            )
+        if not result.get("has_identity_index"):
+            self._family_labels["identity_index_hit_count"].setText("—（未保留）")
+        self._update_evidence_availability(result)
         _fill_table(self.tbl_iso, self._compact_iso_rows(result.get("iso_rows", [])))
         _fill_table(
             self.tbl_candidates,
@@ -398,14 +435,57 @@ class IdentityInspectorWidget(QWidget):
     def _fill_level_cards(self, rows: list[dict[str, str]]) -> None:
         _clear_layout(self.level_list)
         if not rows:
-            self.lbl_level_hint.setText("0 筆")
-            self.level_list.addWidget(self._empty_label("這次查詢沒有在 123_minus_1.csv 找到 3D Level 線索。"))
+            if self._last_result.get("has_minus1"):
+                self.lbl_level_hint.setText("0 筆")
+                message = "這次查詢沒有在 123_minus_1.csv 找到 3D Level 線索。"
+            else:
+                self.lbl_level_hint.setText("未保留")
+                message = (
+                    "本次 Run 沒有保留 123_minus_1.csv；這裡的空白不代表 0 命中。"
+                )
+            self.level_list.addWidget(self._empty_label(message))
             self.level_list.addStretch()
             return
         self.lbl_level_hint.setText(f"{len(rows)} 個 Level")
         for record in rows:
             self.level_list.addWidget(self._level_chip(record))
         self.level_list.addStretch()
+
+    def _update_evidence_availability(self, result: dict[str, Any]) -> None:
+        checks = [
+            ("has_iso_source", "ISO / mapping"),
+            ("has_minus1", "3D Level"),
+            ("has_candidates", "候選召回"),
+            ("has_identity_index", "身份索引"),
+            ("has_first_try_trace", "First_try trace"),
+        ]
+        available = [label for key, label in checks if result.get(key)]
+        missing = [label for key, label in checks if not result.get(key)]
+        first_try_fallback = bool(result.get("has_first_try"))
+        if first_try_fallback and "First_try trace" in missing:
+            missing.remove("First_try trace")
+            available.append("First_try 原始檔（無 trace）")
+
+        if missing:
+            self.lbl_availability.setText(
+                "證據可用性｜已有："
+                + ("、".join(available) if available else "無")
+                + "；未保留："
+                + "、".join(missing)
+                + "。『未保留』不等於 0 命中。"
+            )
+            self.lbl_availability.setStyleSheet(
+                "color:#92400E; background:#FFFBEB; border:1px solid #FDE68A; "
+                "border-radius:7px; padding:7px 10px; font-size:11px; font-weight:600;"
+            )
+        else:
+            self.lbl_availability.setText(
+                "證據可用性｜本次調查所需來源皆已保留。"
+            )
+            self.lbl_availability.setStyleSheet(
+                "color:#166534; background:#F0FDF4; border:1px solid #BBF7D0; "
+                "border-radius:7px; padding:7px 10px; font-size:11px; font-weight:600;"
+            )
 
     def _level_chip(self, record: dict[str, str]) -> QWidget:
         frame = QFrame()

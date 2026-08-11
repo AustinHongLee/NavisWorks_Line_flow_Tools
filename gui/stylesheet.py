@@ -43,10 +43,15 @@ QFrame#sidebar {{
     border-right: 1px solid {g.sidebar_divider};
 }}
 QLabel#sidebarTitle {{
-    color: {g.sidebar_title}; font-size: {g.font_size_xl}; font-weight: 700;
+    color: {g.sidebar_title}; font-size: {g.font_size_lg}; font-weight: 700;
 }}
 QLabel#sidebarVersion {{
     color: {g.sidebar_text}; font-size: {g.font_size_xs};
+}}
+QLabel#sidebarBrandIcon {{
+    color: {g.sidebar_title}; background: #F8FAFC;
+    border: 1px solid #CBD5E1; border-radius: 11px;
+    font-size: {g.font_size_lg}; font-weight: 800;
 }}
 QLabel#sidebarSection {{
     color: {g.sidebar_text}; font-size: {g.font_size_xs};
@@ -55,35 +60,69 @@ QLabel#sidebarSection {{
 
 /* Sidebar nav */
 QPushButton[class="sidebar-nav"] {{
-    background: transparent; color: {g.sidebar_text}; border: none;
-    border-radius: {g.radius}; padding: 10px 14px;
+    background: transparent; color: {g.sidebar_text};
+    border: 2px solid transparent;
+    border-radius: {g.radius}; padding: 8px 12px;
     font-size: {g.font_size_base}; font-weight: 500; text-align: left;
 }}
 QPushButton[class="sidebar-nav"]:hover {{
     background: {g.sidebar_item_hover}; color: {g.sidebar_text_hover};
 }}
+QPushButton[class="sidebar-nav"]:pressed {{
+    background: #172033; color: {g.sidebar_text_active};
+    padding: 9px 11px 7px 13px;
+}}
+QPushButton[class="sidebar-nav"]:focus {{ border-color: #60A5FA; }}
 QPushButton[class="sidebar-nav"]:checked {{
     background: {g.sidebar_item_active}; color: {g.sidebar_text_active};
     font-weight: 600;
 }}
+QPushButton[class="sidebar-nav"]:checked:hover {{ background: #1D4ED8; }}
+QPushButton[class="sidebar-nav"]:checked:pressed {{ background: #1E40AF; }}
+QLabel#sidebarNavState {{
+    background: transparent; font-size: {g.font_size_sm}; font-weight: 800;
+}}
+QLabel#sidebarNavState[nav-state="current"] {{ color: #93C5FD; }}
+QLabel#sidebarNavState[nav-state="done"] {{ color: #86EFAC; }}
+QLabel#sidebarNavState[nav-state="attention"] {{ color: #FDE68A; }}
+QLabel#sidebarNavState[nav-state="available"] {{ color: #CBD5E1; }}
+QLabel#sidebarNavState[nav-state="pending"] {{ color: #64748B; }}
 
 /* Sidebar actions */
 QPushButton#sidebarRunAll {{
-    background: {m.primary}; color: white; border: none;
-    border-radius: {g.radius}; padding: 10px 14px;
+    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+        stop:0 {m.primary}, stop:1 #167493);
+    color: white; border: 2px solid transparent;
+    border-radius: {g.radius}; padding: 8px 12px;
     font-size: {g.font_size_base}; font-weight: 600;
 }}
-QPushButton#sidebarRunAll:hover {{ background: {m.primary_hover}; }}
+QPushButton#sidebarRunAll:hover {{
+    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+        stop:0 {m.primary_hover}, stop:1 #12647F);
+}}
+QPushButton#sidebarRunAll:pressed {{
+    background: {m.primary_dark}; padding: 9px 11px 7px 13px;
+}}
+QPushButton#sidebarRunAll:focus {{ border-color: #BFDBFE; }}
 QPushButton#sidebarRunAll:disabled {{
     background: {g.sidebar_item_hover}; color: {g.sidebar_text};
+    border-color: transparent;
 }}
 QPushButton#sidebarCleanup {{
     background: transparent; color: {g.sidebar_text};
-    border: 1px solid {g.sidebar_divider}; border-radius: {g.radius};
-    padding: 8px 14px; font-size: {g.font_size_sm};
+    border: 2px solid {g.sidebar_divider}; border-radius: {g.radius};
+    padding: 7px 13px; font-size: {g.font_size_sm};
 }}
 QPushButton#sidebarCleanup:hover {{
     background: {g.sidebar_item_hover}; color: {g.sidebar_text_hover};
+}}
+QPushButton#sidebarCleanup:pressed {{
+    background: #172033; color: {g.sidebar_text_active};
+    padding: 8px 12px 6px 14px;
+}}
+QPushButton#sidebarCleanup:focus {{ border-color: #60A5FA; }}
+QPushButton#sidebarCleanup:disabled {{
+    background: transparent; color: #64748B; border-color: #334155;
 }}
 QCheckBox#sidebarCheck {{
     color: {g.sidebar_text}; font-size: {g.font_size_xs}; spacing: 6px;
@@ -98,7 +137,7 @@ QCheckBox#sidebarCheck::indicator:checked {{
 
 /* Sidebar status badges */
 QLabel[class="sb-ok"]      {{ color: {m.success_light}; font-size: {g.font_size_xs}; padding: 2px 0; }}
-QLabel[class="sb-err"]     {{ color: {g.danger};        font-size: {g.font_size_xs}; padding: 2px 0; }}
+QLabel[class="sb-err"]     {{ color: #F87171;           font-size: {g.font_size_xs}; padding: 2px 0; }}
 QLabel[class="sb-neutral"] {{ color: {g.sidebar_text};  font-size: {g.font_size_xs}; padding: 2px 0; }}
 QLabel[class="sb-ready"]   {{ color: {m.primary_light}; font-size: {g.font_size_sm}; font-weight: 600; padding: 4px 0; }}
 
@@ -112,11 +151,12 @@ QWidget[class="stepper-bar"] {{
     border-radius: {g.radius_xl};
 }}
 QPushButton[step-state="active"] {{
-    background: {m.primary}; color: white; border: none;
-    border-radius: {g.radius_pill}; padding: 8px 20px;
+    background: {m.primary}; color: white; border: 2px solid transparent;
+    border-radius: {g.radius_pill}; padding: 6px 18px;
     font-size: {g.font_size_sm}; font-weight: 700;
 }}
 QPushButton[step-state="active"]:hover {{ background: {m.primary_hover}; }}
+QPushButton[step-state="active"]:pressed {{ background: {m.primary_dark}; }}
 QPushButton[step-state="completed"] {{
     background: {m.success_bg}; color: {m.success_text}; border: none;
     border-radius: {g.radius_pill}; padding: 8px 20px;
@@ -212,15 +252,20 @@ QComboBox QAbstractItemView {{
 /* ═══════════════  BUTTONS (3-tier)  ═══════════════ */
 /* Secondary (default) */
 QPushButton {{
-    background: {g.bg_card}; border: 1.5px solid {g.border_input};
-    border-radius: {g.radius}; padding: 8px 18px;
+    background: {g.bg_card}; border: 2px solid {g.border_input};
+    border-radius: {g.radius}; padding: 7px 17px;
     font-size: {g.font_size_sm}; font-weight: 500; color: {g.text_secondary};
 }}
 QPushButton:hover {{
     background: {g.bg_surface}; border-color: {g.border_hover};
     color: {g.text_primary};
 }}
-QPushButton:pressed {{ background: {g.border}; }}
+QPushButton:pressed {{
+    background: {g.border}; padding: 8px 16px 6px 18px;
+}}
+QPushButton:focus {{
+    border-color: {m.primary_light};
+}}
 QPushButton:disabled {{
     background: {g.bg_app}; color: {g.text_placeholder};
     border-color: {g.border};
@@ -228,42 +273,77 @@ QPushButton:disabled {{
 
 /* Primary */
 QPushButton[class="btn-primary"] {{
-    background: {m.primary}; color: white; border: none;
-    font-weight: 600; padding: 8px 20px; border-radius: {g.radius};
+    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+        stop:0 {m.primary}, stop:1 #167493);
+    color: white; border: 2px solid transparent;
+    font-weight: 600; padding: 6px 18px; border-radius: {g.radius};
 }}
-QPushButton[class="btn-primary"]:hover {{ background: {m.primary_hover}; }}
-QPushButton[class="btn-primary"]:pressed {{ background: {m.primary_dark}; }}
-QPushButton[class="btn-primary"]:disabled {{ background: {g.text_placeholder}; }}
+QPushButton[class="btn-primary"]:hover {{
+    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+        stop:0 {m.primary_hover}, stop:1 #12647F);
+}}
+QPushButton[class="btn-primary"]:pressed {{
+    background: {m.primary_dark}; padding: 7px 17px 5px 19px;
+}}
+QPushButton[class="btn-primary"]:focus {{ border-color: #BFDBFE; }}
+QPushButton[class="btn-primary"]:disabled {{
+    background: {g.text_placeholder}; border-color: transparent;
+}}
 
 /* Tertiary (text button) */
 QPushButton[class="btn-tertiary"] {{
-    background: transparent; color: {m.primary}; border: none;
-    font-weight: 500; padding: 8px 16px;
+    background: transparent; color: {m.primary};
+    border: 2px solid transparent;
+    font-weight: 500; padding: 6px 14px;
 }}
 QPushButton[class="btn-tertiary"]:hover {{
     background: {m.primary_bg}; color: {m.primary_hover};
+}}
+QPushButton[class="btn-tertiary"]:pressed {{
+    background: {m.primary_bg_hover};
+    padding: 7px 13px 5px 15px;
+}}
+QPushButton[class="btn-tertiary"]:focus {{ border-color: {m.primary}; }}
+QPushButton[class="btn-tertiary"]:disabled {{
+    background: transparent; color: {g.text_placeholder};
 }}
 
 /* Accent */
 QPushButton[class="btn-accent"] {{
     background: {m.primary_bg}; color: {m.primary_hover};
-    border: 1.5px solid {m.primary_border};
+    border: 2px solid {m.primary_border};
     padding: 6px 14px; font-size: {g.font_size_sm}; border-radius: {g.radius};
 }}
 QPushButton[class="btn-accent"]:hover {{ background: {m.primary_bg_hover}; }}
+QPushButton[class="btn-accent"]:pressed {{
+    background: {m.primary_selection}; padding: 7px 13px 5px 15px;
+}}
+QPushButton[class="btn-accent"]:focus {{ border-color: {m.primary}; }}
+QPushButton[class="btn-accent"]:disabled {{
+    background: {g.bg_app}; color: {g.text_placeholder};
+    border-color: {g.border};
+}}
 
 /* Outline */
 QPushButton[class="btn-outline"] {{
     background: transparent; color: {m.primary};
-    border: 1.5px solid {m.primary_border};
+    border: 2px solid {m.primary_border};
     padding: 6px 14px; border-radius: {g.radius};
 }}
 QPushButton[class="btn-outline"]:hover {{ background: {m.primary_bg}; }}
+QPushButton[class="btn-outline"]:pressed {{
+    background: {m.primary_bg_hover}; padding: 7px 13px 5px 15px;
+}}
+QPushButton[class="btn-outline"]:focus {{ border-color: {m.primary}; }}
+QPushButton[class="btn-outline"]:disabled {{
+    background: transparent; color: {g.text_placeholder};
+    border-color: {g.border};
+}}
 
 /* Ghost (dashed border, muted) */
 QPushButton[class="btn-ghost"] {{
     background: transparent; color: {m.primary};
-    border: 1.5px dashed {m.primary_border};
+    border: 2px dashed {m.primary_border};
     padding: 8px 20px; border-radius: {g.radius};
     font-weight: 600;
 }}
@@ -280,24 +360,39 @@ QPushButton#btnRunAll {{
     background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
         stop:0 {m.primary}, stop:1 {m.primary_light});
     color: white; font-size: {g.font_size_lg}; font-weight: 700;
-    padding: 12px 32px; border-radius: {g.radius_lg}; border: none;
+    padding: 10px 30px; border-radius: {g.radius_lg};
+    border: 2px solid transparent;
 }}
 QPushButton#btnRunAll:hover {{
     background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
         stop:0 {m.primary_hover}, stop:1 {m.primary});
 }}
-QPushButton#btnRunAll:disabled {{ background: {g.text_placeholder}; }}
+QPushButton#btnRunAll:pressed {{
+    background: {m.primary_dark}; padding: 11px 29px 9px 31px;
+}}
+QPushButton#btnRunAll:focus {{ border-color: #BFDBFE; }}
+QPushButton#btnRunAll:disabled {{
+    background: {g.text_placeholder}; border-color: transparent;
+}}
 
 /* Export */
 QPushButton#btnExport {{
     background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
         stop:0 {m.success}, stop:1 {m.success_light});
     color: white; font-size: {g.font_size_base}; font-weight: 600;
-    padding: 10px 24px; border-radius: {g.radius_lg}; border: none;
+    padding: 8px 22px; border-radius: {g.radius_lg};
+    border: 2px solid transparent;
 }}
 QPushButton#btnExport:hover {{
     background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
         stop:0 {m.success_hover}, stop:1 {m.success});
+}}
+QPushButton#btnExport:pressed {{
+    background: {m.success_hover}; padding: 9px 21px 7px 23px;
+}}
+QPushButton#btnExport:focus {{ border-color: #A7F3D0; }}
+QPushButton#btnExport:disabled {{
+    background: {g.border}; color: {g.text_muted}; border-color: transparent;
 }}
 
 /* Cleanup */
@@ -319,6 +414,9 @@ QCheckBox::indicator {{
 QCheckBox::indicator:hover {{ border-color: {m.primary}; }}
 QCheckBox::indicator:checked {{
     background: {m.primary}; border-color: {m.primary};
+}}
+QCheckBox:focus, QRadioButton:focus {{
+    color: {m.primary_dark}; background: {m.primary_bg};
 }}
 
 /* ═══════════════  BADGES  ═══════════════ */

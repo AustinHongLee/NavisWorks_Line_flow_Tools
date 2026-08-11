@@ -68,7 +68,16 @@ class IsoMatcherSemanticFuzzyTests(unittest.TestCase):
                 }]
             ).to_csv(minus_path, index=False, encoding="utf-8-sig")
             pd.DataFrame(
-                [{"流水號": "37", "Line num": "3_4-S11G-N4-20951Q"}]
+                [
+                    {
+                        "流水號": "37",
+                        "Line num": "3_4-S11G-N4-20951Q",
+                        "系統": "S11G",
+                        "Class": "N4",
+                        "Size": "3/4",
+                        "__source_internal": "must-not-leak",
+                    }
+                ]
             ).to_excel(iso_path, sheet_name="DWG NO.ALL", index=False)
 
             matcher = IsoMatcher()
@@ -84,6 +93,13 @@ class IsoMatcherSemanticFuzzyTests(unittest.TestCase):
             )
 
             self.assertEqual(len(matcher.fuzzy_unmatched), 1)
+            metadata = matcher.fuzzy_unmatched[0]["iso_metadata"]
+            self.assertEqual(metadata["流水號"], "37")
+            self.assertEqual(metadata["Line num"], "3_4-S11G-N4-20951Q")
+            self.assertEqual(metadata["系統"], "S11G")
+            self.assertEqual(metadata["Class"], "N4")
+            self.assertEqual(metadata["Size"], "3/4")
+            self.assertNotIn("__source_internal", metadata)
             candidates = matcher.fuzzy_unmatched[0]["candidates"]
             self.assertGreaterEqual(len(candidates), 1)
             self.assertEqual(candidates[0]["line_3d"], "1-1/2-S11G-N4-20951")
@@ -198,6 +214,18 @@ class IsoMatcherSemanticFuzzyTests(unittest.TestCase):
                     {
                         "iso_line": "TRIM-6FL216Q-N3-001",
                         "iso_spool": "284",
+                        "iso_metadata": {
+                            "流水號": "source-spool",
+                            "管線編號": "source-line",
+                            "ISO_Match_Key": "source-match-key",
+                            "Raw_3D_PipeCode": "source-raw",
+                            "MatchType": "source-match-type",
+                            "系統": "TRIM",
+                            "Class": "N3",
+                            "Size": "6",
+                            "drawing_group2": "/TRIM-6FL216Q-N3-001",
+                            "__line_norm": "must-not-leak",
+                        },
                         "line_3d": "TRIM-6FL216Q-N3",
                         "raw_3d": "/TRIM-6FL216Q-N3",
                         "score": 0.82,
@@ -219,6 +247,16 @@ class IsoMatcherSemanticFuzzyTests(unittest.TestCase):
             self.assertEqual(row["MatchScore"], "0.82")
             self.assertEqual(row["ConfidencePrimary"], "0.82")
             self.assertEqual(row["MatchSource"], "ISO 反查")
+            self.assertEqual(row["管線編號"], "TRIM-6FL216Q-N3-001")
+            self.assertEqual(row["流水號"], "284")
+            self.assertEqual(row["ISO_Match_Key"], "TRIM-6FL216Q-N3")
+            self.assertEqual(row["Raw_3D_PipeCode"], "/TRIM-6FL216Q-N3")
+            self.assertEqual(row["MatchType"], "fuzzy_manual")
+            self.assertEqual(row["系統"], "TRIM")
+            self.assertEqual(row["Class"], "N3")
+            self.assertEqual(row["Size"], "6")
+            self.assertEqual(row["drawing_group2"], "/TRIM-6FL216Q-N3-001")
+            self.assertNotIn("__line_norm", result.columns)
             self.assertIn("candidate_kind=iso_reverse_recall", row["CandidateTrace"])
             self.assertIn("match=fuzzy_manual", row["IdentityReason"])
             self.assertIn("PipelineId 命中", row["IdentityReason"])

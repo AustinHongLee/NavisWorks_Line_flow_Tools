@@ -320,9 +320,13 @@ class FuzzyMatchDialog(QDialog):
         return "fuzzy"
 
     def _selection_from_candidate(self, item: dict, cand: dict) -> dict:
+        iso_metadata = item.get("iso_metadata", {})
+        if not isinstance(iso_metadata, dict):
+            iso_metadata = {}
         return {
             "iso_line": item["iso_line"],
             "iso_spool": item["iso_spool"],
+            "iso_metadata": dict(iso_metadata),
             "line_3d": cand["line_3d"],
             "raw_3d": cand.get("raw_3d", cand["line_3d"]),
             "score": cand.get("score", ""),
