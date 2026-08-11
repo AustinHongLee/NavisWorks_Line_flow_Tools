@@ -22,6 +22,7 @@ from PyQt6.QtGui import QColor, QFont, QIcon, QPixmap
 from PyQt6.QtWidgets import QApplication, QMessageBox, QSplashScreen
 
 from gui import build_stylesheet
+from core.release_update import CURRENT_VERSION
 
 
 APP_ICON_PATH = (
@@ -147,6 +148,8 @@ def main() -> int:
     app.setOrganizationName("Intelligent Engineering Co., Ltd.")
     app.setOrganizationDomain("intelligent-engineering.com.tw")
     app.setApplicationName("PipelineOps")
+    app.setApplicationVersion(CURRENT_VERSION)
+    app.setProperty("skipReleaseCheck", bool(args.smoke_test))
     if APP_ICON_PATH.is_file():
         app_icon = QIcon(str(APP_ICON_PATH))
         if not app_icon.isNull():

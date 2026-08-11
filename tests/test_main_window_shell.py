@@ -5,6 +5,7 @@ import os
 from contextlib import contextmanager
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -14,6 +15,7 @@ from PyQt6.QtGui import QCloseEvent, QIcon
 from PyQt6.QtWidgets import QApplication
 
 from gui.main_window import MainWindow
+from core.release_update import CURRENT_VERSION, LatestRelease
 
 
 @contextmanager
@@ -62,6 +64,76 @@ def test_sidebar_uses_the_high_resolution_brand_mark():
     icon = QIcon(str(brand_dir / "pipeline_ops_v2.ico"))
     sizes = {(size.width(), size.height()) for size in icon.availableSizes()}
     assert {(16, 16), (32, 32), (48, 48), (256, 256)} <= sizes
+
+
+def test_sidebar_starts_with_a_quiet_local_version_indicator():
+    with _shown_main_window() as (_app, window):
+        assert window.lbl_update_status.text() == f"v{CURRENT_VERSION}"
+        assert window.lbl_update_status.property("update-state") == "unknown"
+
+
+def test_release_result_shows_version_gap_without_opening_a_browser(monkeypatch):
+    opened: list[str] = []
+    monkeypatch.setattr(
+        "gui.main_window.QDesktopServices",
+        SimpleNamespace(openUrl=lambda url: opened.append(url.toString())),
+    )
+    release = LatestRelease(
+        tag_name="v4.2.0",
+        name="管線流程工具 v4.2.0",
+        published_at=None,
+        version="4.2.0",
+        release_url=(
+            "https://github.com/AustinHongLee/"
+            "NavisWorks_Line_flow_Tools/releases/tag/v4.2.0"
+        ),
+    )
+    with _shown_main_window() as (_app, window):
+        window._apply_release_update(release)
+
+        assert window.lbl_update_status.property("update-state") == "available"
+        assert "v4.2.0" in window.lbl_update_status.text()
+        assert (
+            window.lbl_update_status.minimumSizeHint().width()
+            <= window.lbl_update_status.width()
+        )
+        assert opened == []
+
+        window.lbl_update_status.linkActivated.emit("https://evil.example/")
+        assert opened == []
+        window.lbl_update_status.linkActivated.emit(release.url)
+        assert opened == [release.url]
+
+
+def test_release_result_distinguishes_current_and_preview_versions():
+    with _shown_main_window() as (_app, window):
+        current = LatestRelease(
+            tag_name=f"v{CURRENT_VERSION}",
+            name=f"管線流程工具 v{CURRENT_VERSION}",
+            published_at=None,
+            version=CURRENT_VERSION,
+        )
+        window._apply_release_update(current)
+        assert window.lbl_update_status.property("update-state") == "current"
+        assert "最新" in window.lbl_update_status.text()
+        assert (
+            window.lbl_update_status.minimumSizeHint().width()
+            <= window.lbl_update_status.width()
+        )
+
+        older = LatestRelease(
+            tag_name="v4.0.0",
+            name="管線流程工具 v4.0.0",
+            published_at=None,
+            version="4.0.0",
+        )
+        window._apply_release_update(older)
+        assert window.lbl_update_status.property("update-state") == "ahead"
+        assert "預覽" in window.lbl_update_status.text()
+        assert (
+            window.lbl_update_status.minimumSizeHint().width()
+            <= window.lbl_update_status.width()
+        )
 
 
 def test_sidebar_states_include_a_non_colour_current_marker():

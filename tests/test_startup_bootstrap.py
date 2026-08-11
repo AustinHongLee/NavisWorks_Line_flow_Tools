@@ -7,6 +7,7 @@ from pathlib import Path
 
 from PyQt6.QtGui import QImage
 
+from core.release_update import CURRENT_VERSION
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -50,3 +51,16 @@ def test_startup_splash_is_a_valid_compact_png():
         pixels[offset : offset + 3] == b"\xff\x00\xff"
         for offset in range(0, len(pixels), 4)
     )
+
+
+def test_windows_version_resource_matches_the_runtime_version():
+    text = (
+        REPO_ROOT / "assets" / "branding" / "windows_version_info_v4.txt"
+    ).read_text(encoding="utf-8")
+    major, minor, patch = CURRENT_VERSION.split(".")
+    version_tuple = f"({major}, {minor}, {patch}, 0)"
+
+    assert f"filevers={version_tuple}" in text
+    assert f"prodvers={version_tuple}" in text
+    assert f"StringStruct('FileVersion', '{CURRENT_VERSION}')" in text
+    assert f"StringStruct('ProductVersion', '{CURRENT_VERSION}')" in text
