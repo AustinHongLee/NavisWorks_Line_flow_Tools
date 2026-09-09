@@ -16,6 +16,49 @@ from core.run_ledger import RunLedger
 from gui.main_window import MainWindow
 
 
+def test_first_try_rescue_refreshes_ledger_ownership(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    first_try = tmp_path / "First_try.csv"
+    pd.DataFrame(
+        [
+            {
+                "Path": "MODEL___AREA___/TRIM-OIL-DITCH-PIPE",
+                "DisplayName": "/TRIM-OIL-DITCH-PIPE",
+                "Class": "Pipe",
+                "Level": "3",
+                "PipelineId": "/TRIM-OIL-DITCH-PIPE",
+            }
+        ]
+    ).to_csv(first_try, index=False, encoding="utf-8-sig")
+
+    class ClaimedLedger:
+        @staticmethod
+        def get_ownership(_item_id):
+            return {"family_id": "ANOTHER-ISO-FAMILY"}
+
+    window = MainWindow()
+    try:
+        window.txt_base_dir.setText(str(tmp_path))
+        window.txt_first_name.setText("First_try.csv")
+        window._worker = SimpleNamespace(
+            p={"base_dir": str(tmp_path), "first_name": "First_try.csv"},
+            input_fingerprint="sha256:test-input",
+            ledger=ClaimedLedger(),
+        )
+
+        candidates = window._rescue_first_try_candidates(
+            {"iso_line": "TRIM-OIL-DITCH-PIPE"}
+        )
+
+        assert candidates
+        assert candidates[0]["ownership_status"] == "claimed_by_other"
+        assert candidates[0]["evidence"]["ownership_family"] == "ANOTHER-ISO-FAMILY"
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
 def test_human_workbench_apply_is_versioned_locked_and_audited(tmp_path):
     app = QApplication.instance() or QApplication([])
     dataset_revision = "sha256:test-input"

@@ -14,6 +14,13 @@ BRAND_DIR = PROJECT_ROOT / "assets" / "branding"
 APP_ICON_PNG = BRAND_DIR / "ie_mark_v2.png"
 APP_ICON_ICO = BRAND_DIR / "pipeline_ops_v2.ico"
 STARTUP_SPLASH = BRAND_DIR / "startup_splash_v2.png"
+WORKFLOW_ART_DIR = PROJECT_ROOT / "assets" / "ui" / "workflow"
+WORKFLOW_ART_FILES = (
+    "project-intake.png",
+    "iso-matching.png",
+    "json-export.png",
+    "audit-trace.png",
+)
 VERSION_INFO = BRAND_DIR / "windows_version_info_v4.txt"
 
 block_cipher = None
@@ -36,6 +43,9 @@ a = Analysis(
     datas=[
         (str(APP_ICON_PNG), "assets/branding"),
         (str(STARTUP_SPLASH), "assets/branding"),
+    ] + [
+        (str(WORKFLOW_ART_DIR / filename), "assets/ui/workflow")
+        for filename in WORKFLOW_ART_FILES
     ],
     hiddenimports=hiddenimports,
     hookspath=[],
@@ -51,6 +61,17 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+
+# Qt6Core on Windows links against the unversioned ICU shim provided by the
+# operating system.  Some developer shells add Poppler to PATH; PyInstaller
+# can then mistake Poppler's version-suffixed ICU 78 binaries for that shim.
+# They have incompatible exports (for example ``ucnv_open_78`` instead of
+# ``ucnv_open``), which makes the packaged app fail while importing QtCore.
+a.binaries = [
+    item
+    for item in a.binaries
+    if Path(item[0]).name.lower() not in {"icuuc.dll", "icudt78.dll"}
+]
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 splash = Splash(

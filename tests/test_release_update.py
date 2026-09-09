@@ -40,8 +40,8 @@ VALID_MANIFEST = {
 
 class VersionParsingTests(unittest.TestCase):
     def test_current_version_is_the_expected_triplet(self):
-        self.assertEqual(CURRENT_VERSION, "4.1.0")
-        self.assertEqual(parse_version(CURRENT_VERSION), (4, 1, 0))
+        self.assertEqual(CURRENT_VERSION, "4.1.1")
+        self.assertEqual(parse_version(CURRENT_VERSION), (4, 1, 1))
 
     def test_accepts_release_prefix_and_surrounding_unicode_whitespace(self):
         self.assertEqual(parse_version("\u3000 v12.34.56 \n"), (12, 34, 56))
@@ -138,7 +138,7 @@ class VersionComparisonTests(unittest.TestCase):
     def test_default_current_version_convenience_api(self):
         result = assess_version_gap("v4.2.0")
         self.assertEqual((result.current, result.latest, result.kind), (
-            "4.1.0",
+            "4.1.1",
             "4.2.0",
             "update_minor",
         ))

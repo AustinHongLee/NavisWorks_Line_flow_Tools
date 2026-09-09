@@ -299,6 +299,61 @@ class MatchWorkbenchDialogTests(unittest.TestCase):
             dialog.close()
             dialog.deleteLater()
 
+    def test_first_try_rescue_adds_manual_candidate_to_empty_case(self):
+        rescued = {
+            "line_3d": "TRIM-OIL-DITCH-PIPE",
+            "raw_3d": "/TRIM-OIL-DITCH-PIPE",
+            "path": "MODEL___AREA___/TRIM-OIL-DITCH-PIPE",
+            "level": "3",
+            "item_id": "fallback:test:item",
+            "score": 0.88,
+            "reason": "First_try 人工補找",
+            "source": "First_try 補找",
+            "pair_auto_safe": False,
+            "auto_safe": False,
+            "ownership_status": "available",
+            "reason_codes": ["manual_first_try_rescue"],
+            "evidence": {
+                "classification": "exact",
+                "ownership_status": "available",
+            },
+        }
+        dialog = MatchWorkbenchDialog(
+            None,
+            [
+                {
+                    "iso_line": "TRIM-OIL-DITCH-PIPE",
+                    "iso_spool": "672",
+                    "candidates": [],
+                }
+            ],
+            candidate_rescuer=lambda _case: [rescued],
+        )
+        try:
+            dialog.select_case(0)
+            with patch(
+                "gui.dialogs.match_workbench_dialog.QMessageBox.information",
+                return_value=QMessageBox.StandardButton.Ok,
+            ):
+                dialog._rescue_current_candidates()
+            self.assertEqual(dialog.candidate_table.rowCount(), 1)
+            self.assertEqual(
+                dialog._unmatched[0]["candidates"][0]["line_3d"],
+                "TRIM-OIL-DITCH-PIPE",
+            )
+            # The leading slash is presented as a visible symbol difference,
+            # but the rescued row remains manual-only.
+            self.assertEqual(dialog._categories[0], "symbol_pattern")
+            self.assertFalse(dialog._unmatched[0]["candidates"][0]["auto_safe"])
+            self.assertTrue(dialog.stage_candidate(0, 0))
+            self.assertEqual(
+                dialog.get_staged_decisions()[0]["origin"],
+                "manual",
+            )
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -67,6 +67,13 @@ _PAGE_CONTEXT = [
     ("04 · 稽核調查", "沿著 ISO、3D 與中間檔回看證據鏈"),
 ]
 
+_PAGE_ART = [
+    ("project-intake.png", "專案資料匯入與管線來源"),
+    ("iso-matching.png", "ISO 清單與管線身分比對"),
+    ("json-export.png", "驗證後的資料安全匯出"),
+    ("audit-trace.png", "沿管線證據鏈進行稽核追溯"),
+]
+
 _NAV_ICONS = ("folder", "link", "export", "search")
 
 _HEADER_ACTION_ICONS = {
@@ -374,6 +381,9 @@ class MainWindow(QMainWindow, PipelineTabMixin, JsonTabMixin, InvestigationTabMi
             "#workbenchProject { color: #0F172A; font-size: 17px; font-weight: 850; }"
             "#workbenchMemory { color: #334155; font-size: 11px; font-weight: 650; }"
             "#workbenchNext { color: #64748B; font-size: 11px; }"
+            "#workbenchArtFrame { background:#EAF4FC; border:1px solid #C9DFF1; "
+            "border-radius:10px; }"
+            "#workbenchArt { background:transparent; border:none; border-radius:8px; }"
             "#workbenchState { border-radius: 9px; padding: 6px 10px; "
             "font-size: 11px; font-weight: 800; }"
             "#workbenchState[state-kind='neutral'] { color:#475569; background:#F1F5F9; "
@@ -426,6 +436,20 @@ class MainWindow(QMainWindow, PipelineTabMixin, JsonTabMixin, InvestigationTabMi
         title_col.addWidget(self.lbl_header_run)
         title_col.addWidget(self.lbl_header_next)
         lay.addLayout(title_col, stretch=1)
+
+        art_frame = QFrame()
+        art_frame.setObjectName("workbenchArtFrame")
+        art_frame.setFixedSize(160, 80)
+        art_lay = QVBoxLayout(art_frame)
+        art_lay.setContentsMargins(2, 2, 2, 2)
+        self.lbl_header_art = QLabel()
+        self.lbl_header_art.setObjectName("workbenchArt")
+        self.lbl_header_art.setFixedSize(156, 76)
+        self.lbl_header_art.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_header_art.setAccessibleName("專案資料匯入與管線來源情境圖")
+        art_lay.addWidget(self.lbl_header_art)
+        lay.addWidget(art_frame)
+
         self.btn_header_action = QPushButton("選擇專案")
         self.btn_header_action.setObjectName("headerAction")
         self.btn_header_action.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -447,7 +471,38 @@ class MainWindow(QMainWindow, PipelineTabMixin, JsonTabMixin, InvestigationTabMi
         self.lbl_header_state.setObjectName("workbenchState")
         self.lbl_header_state.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.addWidget(self.lbl_header_state)
+        self._set_header_art(0)
         return header
+
+    def _set_header_art(self, page_index: int) -> None:
+        """Load the compact workflow illustration for the active page."""
+
+        if not hasattr(self, "lbl_header_art"):
+            return
+        safe_index = max(0, min(page_index, len(_PAGE_ART) - 1))
+        filename, description = _PAGE_ART[safe_index]
+        art_path = (
+            Path(__file__).resolve().parents[1]
+            / "assets"
+            / "ui"
+            / "workflow"
+            / filename
+        )
+        pixmap = QPixmap(str(art_path))
+        if pixmap.isNull():
+            self.lbl_header_art.clear()
+            self.lbl_header_art.parentWidget().setVisible(False)
+            return
+        self.lbl_header_art.setPixmap(
+            pixmap.scaled(
+                self.lbl_header_art.size(),
+                Qt.AspectRatioMode.IgnoreAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+        self.lbl_header_art.setAccessibleName(f"{description}情境圖")
+        self.lbl_header_art.setToolTip(description)
+        self.lbl_header_art.parentWidget().setVisible(True)
 
     def _refresh_workbench_header(
         self,
@@ -1200,6 +1255,7 @@ class MainWindow(QMainWindow, PipelineTabMixin, JsonTabMixin, InvestigationTabMi
             btn.setChecked(i == idx)
         self.pages.fade_to(idx)
         self.stepper.set_current(idx)
+        self._set_header_art(idx)
         self._refresh_workbench_header()
 
     def _on_step_clicked(self, idx: int):
@@ -2167,6 +2223,53 @@ class MainWindow(QMainWindow, PipelineTabMixin, JsonTabMixin, InvestigationTabMi
             return
         self._open_match_workbench_cases(fuzzy)
 
+    def _rescue_first_try_candidates(self, case: dict) -> list[dict]:
+        """Re-scan the active run's First_try for one human-selected ISO."""
+
+        from core.first_try_candidate_rescue import find_first_try_candidates
+        from core.match_safety import iso_family_key
+
+        worker = self._worker
+        params = dict(getattr(worker, "p", {}) or {})
+        base_dir = str(params.get("base_dir") or self._get_base_dir())
+        first_name = str(
+            params.get("first_name")
+            or self.txt_first_name.text().strip()
+            or "First_try.csv"
+        )
+        dataset_revision = str(
+            getattr(worker, "input_fingerprint", "")
+        ).strip()
+        candidates = find_first_try_candidates(
+            os.path.join(base_dir, first_name),
+            str(case.get("iso_line", "")),
+            dataset_revision=dataset_revision,
+        )
+
+        requested_family = iso_family_key(case.get("iso_line", ""))
+        ledger = getattr(worker, "ledger", None)
+        for candidate in candidates:
+            item_id = str(candidate.get("item_id", "")).strip()
+            current = (
+                ledger.get_ownership(item_id)
+                if ledger is not None and item_id
+                else {}
+            )
+            owner = str(current.get("family_id", "")).strip()
+            if owner and owner != requested_family:
+                status = "claimed_by_other"
+            elif owner:
+                status = "same_family"
+            else:
+                status = "available"
+            candidate["ownership_status"] = status
+            evidence = dict(candidate.get("evidence", {}) or {})
+            evidence["ownership_status"] = status
+            if owner:
+                evidence["ownership_family"] = owner
+            candidate["evidence"] = evidence
+        return candidates
+
     def _open_match_workbench_cases(
         self,
         fuzzy: list[dict],
@@ -2185,6 +2288,7 @@ class MainWindow(QMainWindow, PipelineTabMixin, JsonTabMixin, InvestigationTabMi
                     self._get_base_dir(),
                 )
             ),
+            candidate_rescuer=self._rescue_first_try_candidates,
         )
         if dlg.exec() != QDialog.DialogCode.Accepted:
             self._log(f"{entry_label}：本次未提交；可由上方『繼續判讀』恢復。")

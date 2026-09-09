@@ -66,6 +66,39 @@ def test_sidebar_uses_the_high_resolution_brand_mark():
     assert {(16, 16), (32, 32), (48, 48), (256, 256)} <= sizes
 
 
+def test_workbench_header_uses_distinct_workflow_art_for_each_page():
+    with _shown_main_window() as (app, window):
+        first_pixmap = window.lbl_header_art.pixmap()
+        assert first_pixmap is not None
+        assert not first_pixmap.isNull()
+        assert first_pixmap.size() == window.lbl_header_art.size()
+        first_key = first_pixmap.cacheKey()
+        assert "專案資料匯入" in window.lbl_header_art.accessibleName()
+
+        window._nav_btns[1].click()
+        QTest.qWait(350)
+        app.processEvents()
+
+        second_pixmap = window.lbl_header_art.pixmap()
+        assert second_pixmap is not None
+        assert not second_pixmap.isNull()
+        assert second_pixmap.cacheKey() != first_key
+        assert "ISO" in window.lbl_header_art.accessibleName()
+
+    art_dir = (
+        Path(__file__).resolve().parents[1]
+        / "assets"
+        / "ui"
+        / "workflow"
+    )
+    assert {path.name for path in art_dir.glob("*.png")} == {
+        "project-intake.png",
+        "iso-matching.png",
+        "json-export.png",
+        "audit-trace.png",
+    }
+
+
 def test_sidebar_starts_with_a_quiet_local_version_indicator():
     with _shown_main_window() as (_app, window):
         assert window.lbl_update_status.text() == f"v{CURRENT_VERSION}"

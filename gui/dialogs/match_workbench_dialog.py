@@ -20,7 +20,7 @@ import re
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from itertools import zip_longest
-from typing import Any
+from typing import Any, Callable
 
 from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QBrush, QColor, QKeySequence, QShortcut
@@ -49,12 +49,14 @@ from PyQt6.QtWidgets import (
 )
 
 from core.match_safety import (
+    annotate_family_aware_safety,
     PatternSignature,
     SymbolBatchPreview,
     pattern_signature,
     pattern_signature_label,
     preview_symbol_batch,
 )
+from core.candidate_family import annotate_candidate_families
 from gui.iconography import app_icon
 
 
@@ -192,6 +194,7 @@ class MatchWorkbenchDialog(QDialog):
         parent: QWidget | None,
         fuzzy_unmatched: list[dict[str, Any]] | None,
         project_dir: str | None = None,
+        candidate_rescuer: Callable[[dict[str, Any]], list[dict[str, Any]]] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("ISO / 3D 配對工作檯")
@@ -201,6 +204,7 @@ class MatchWorkbenchDialog(QDialog):
 
         self._unmatched = list(fuzzy_unmatched or [])
         self._project_dir = _as_text(project_dir)
+        self._candidate_rescuer = candidate_rescuer
         self._categories = {
             idx: self._classify_case(item)
             for idx, item in enumerate(self._unmatched)
@@ -239,6 +243,7 @@ class MatchWorkbenchDialog(QDialog):
 
         secondary_actions = (
             (self.expand_candidates_button, "eye"),
+            (self.rescue_candidates_button, "refresh"),
             (self.undo_button, "history"),
         )
         for button, icon_name in secondary_actions:
@@ -732,7 +737,19 @@ class MatchWorkbenchDialog(QDialog):
         self.expand_candidates_button = QPushButton("顯示全部候選")
         self.expand_candidates_button.clicked.connect(self._toggle_candidate_expansion)
         self.expand_candidates_button.setVisible(False)
-        lay.addWidget(self.expand_candidates_button)
+        candidate_tools = QHBoxLayout()
+        candidate_tools.addWidget(self.expand_candidates_button)
+        self.rescue_candidates_button = QPushButton("從 First_try 補找")
+        self.rescue_candidates_button.setToolTip(
+            "重新讀取 3D 原始匯出，只加入確實存在且帶 Path / Level 證據的候選"
+        )
+        self.rescue_candidates_button.setEnabled(self._candidate_rescuer is not None)
+        self.rescue_candidates_button.clicked.connect(
+            self._rescue_current_candidates
+        )
+        candidate_tools.addWidget(self.rescue_candidates_button)
+        candidate_tools.addStretch(1)
+        lay.addLayout(candidate_tools)
 
         self.no_candidate_label = QLabel("此 ISO 目前沒有候選；保持未配對，不猜。")
         self.no_candidate_label.setObjectName("blockingText")
@@ -1045,6 +1062,77 @@ class MatchWorkbenchDialog(QDialog):
         self._refresh_pattern_bar()
         self._sync_action_state()
         self._refresh_log()
+
+    def _rescue_current_candidates(self) -> None:
+        case_idx = self._current_case_idx
+        if case_idx is None or self._candidate_rescuer is None:
+            return
+        case = self._unmatched[case_idx]
+        self.rescue_candidates_button.setEnabled(False)
+        self.rescue_candidates_button.setText("正在讀取 First_try…")
+        try:
+            recovered = self._candidate_rescuer(dict(case))
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "補找失敗",
+                f"無法從 First_try 補找候選：{exc}",
+            )
+            return
+        finally:
+            self.rescue_candidates_button.setText("從 First_try 補找")
+            self.rescue_candidates_button.setEnabled(True)
+
+        candidates = case.get("candidates", [])
+        candidates = list(candidates) if isinstance(candidates, list) else []
+        existing = {
+            (
+                _as_text(candidate.get("item_id")),
+                _as_text(candidate.get("line_3d")).upper(),
+                _as_text(candidate.get("raw_3d")).upper(),
+            )
+            for candidate in candidates
+            if isinstance(candidate, dict)
+        }
+        added = 0
+        for candidate in recovered or []:
+            if not isinstance(candidate, dict):
+                continue
+            key = (
+                _as_text(candidate.get("item_id")),
+                _as_text(candidate.get("line_3d")).upper(),
+                _as_text(candidate.get("raw_3d")).upper(),
+            )
+            if key in existing:
+                continue
+            existing.add(key)
+            candidates.append(dict(candidate))
+            added += 1
+
+        if added:
+            candidates.sort(key=lambda item: -float(item.get("score", 0.0)))
+            case["candidates"] = annotate_candidate_families(candidates[:50])
+            annotate_family_aware_safety(self._unmatched)
+            self._categories = {
+                idx: self._classify_case(item)
+                for idx, item in enumerate(self._unmatched)
+            }
+            self._expanded_cases.add(case_idx)
+            self._populate_queue()
+            self.select_case(case_idx)
+            self._record_event(case_idx, f"從 First_try 補回 {added} 個候選")
+            QMessageBox.information(
+                self,
+                "已補回候選",
+                f"從 First_try 找到並加入 {added} 個有原始列證據的候選。\n"
+                "請確認 3D 原始值、Path 與 ITEM 使用狀態後再暫存。",
+            )
+        else:
+            QMessageBox.information(
+                self,
+                "沒有新增候選",
+                "First_try 中沒有找到新的相符 3D 身分，或找到的項目已在清單內。",
+            )
 
     def _render_evidence(self, candidate: dict[str, Any] | None) -> None:
         if self._current_case_idx is None or candidate is None:

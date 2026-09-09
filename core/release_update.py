@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Final, Literal, TypeAlias
 
 
-CURRENT_VERSION: Final = "4.1.0"
+CURRENT_VERSION: Final = "4.1.1"
 LATEST_RELEASE_URL: Final = (
     "https://github.com/AustinHongLee/NavisWorks_Line_flow_Tools/releases/latest"
 )
